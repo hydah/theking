@@ -1,0 +1,10 @@
+[project]
+name = "spec-sprint-workflow"
+version = "0.1.0"
+description = "Strict spec/sprint/task/review workflow scaffolding for long-running agent work"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

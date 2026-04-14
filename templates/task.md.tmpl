@@ -1,0 +1,23 @@
+---
+id: {task_id}
+title: {task_title}
+status: draft
+status_history:
+  - draft
+task_type: {task_type}
+requires_e2e: {requires_e2e}
+requires_security_review: {requires_security_review}
+required_agents:
+{required_agents_block}
+current_review_round: 0
+---
+
+## Goal
+- Describe the outcome, not the implementation.
+
+## Constraints
+- Keep scope minimal until the current review round is closed.
+
+## Notes
+- Update status_history on every state change.
+- Increment current_review_round before opening a new review round.
