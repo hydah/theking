@@ -1,0 +1,23 @@
+# Verification Profiles
+
+这里定义项目级验证画像与产物约束。
+
+## Profiles
+
+- `web.browser`：浏览器或 Playwright 驱动的关键路径验证
+- `backend.http`：黑盒 HTTP 接口验证
+- `backend.cli`：CLI / 脚本子进程验证
+- `backend.job`：异步任务、worker 或 job 验证
+
+## 目录
+
+- `browser/` — 浏览器验证资产
+- `http/` — HTTP 验证资产
+- `cli/` — CLI 验证资产
+- `job/` — 作业验证资产
+
+## 约束
+
+- 只有 `web.browser` 任务默认要求 e2e-runner 与 e2e review pair
+- `backend.http`、`backend.cli`、`backend.job` 仍然需要端到端验证，但不强制浏览器
+- 具体证据应写入 task 自身的 `verification/` 目录，而不是写回这里

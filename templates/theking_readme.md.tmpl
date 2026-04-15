@@ -1,0 +1,32 @@
+# .theking
+
+这个目录是 {project_title} 的项目知识库根目录，也是 AI 协作相关资产的 canonical source。
+
+## 入口
+
+- [bootstrap.md](bootstrap.md) — 多工具共享入口
+- [context/project-overview.md](context/project-overview.md) — 项目定位与边界
+- [context/architecture.md](context/architecture.md) — 架构与关键模块
+- [context/dev-workflow.md](context/dev-workflow.md) — 本地开发与验证流程
+- [memory/MEMORY.md](memory/MEMORY.md) — 长期有效但尚未正式化的补充记忆
+- [agents/catalog.md](agents/catalog.md) — 项目内 agent catalog 与职责边界
+- [verification/README.md](verification/README.md) — web/backend 双轨验证画像
+
+## 目录规划
+
+- `context/` — 稳定项目知识
+- `memory/` — 长期补充记忆
+- `agents/` — 项目内 agent catalog 与适配说明
+- `commands/` — 可选命令源码
+- `skills/` — 可选 skill 源码
+- `verification/` — 验证画像、约束与资产规范
+- `workflows/` — project / sprint / task / review 工件
+- `runs/` — 临时运行产物、trace、截图
+
+## 维护原则
+
+- `.theking/` 是唯一真相源，运行时入口只做暴露
+- 正式规则优先写入 `bootstrap.md` 或 `context/`
+- `memory/MEMORY.md` 只保留尚未正式化的补充约定
+- workflow 工件统一放到 `workflows/`
+- `runs/` 只放临时输出，不承载长期知识

@@ -1,5 +1,5 @@
 [project]
-name = "spec-sprint-workflow"
+name = "theking"
 version = "0.1.0"
 description = "Strict spec/sprint/task/review workflow scaffolding for long-running agent work"
 requires-python = ">=3.10"

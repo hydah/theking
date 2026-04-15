@@ -1,0 +1,34 @@
+# Architecture
+
+## 总览
+
+用几句话说明核心模块、数据流和部署边界。
+
+## .theking 结构
+
+```text
+.theking/
+├── README.md
+├── bootstrap.md
+├── context/
+├── memory/
+├── agents/
+├── commands/
+├── skills/
+├── verification/
+├── workflows/
+└── runs/
+```
+
+## 关键模块
+
+| 模块 | 作用 | 关键依赖 |
+|------|------|---------|
+| 业务代码 |  |  |
+| .theking/workflows | 任务工件与 review 记录 |  |
+| .theking/verification | 验证画像与约束 |  |
+
+## 风险点
+
+- 不要让运行时目录演化成第二套规则
+- 不要把临时输出写进 `context/` 或 `memory/`
