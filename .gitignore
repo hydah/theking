@@ -6,11 +6,9 @@ dist/
 *.egg-info/
 .DS_Store
 
-.theking/runs/*
-!.theking/runs/.gitkeep
-**/.theking/runs/*
-!**/.theking/runs/.gitkeep
+.claude/
+.github/
+.theking/
 
 /theking
-.claude/settings.local.json
 ref
