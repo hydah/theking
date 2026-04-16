@@ -1,0 +1,1 @@
+"""Template assets for scaffold documents."""

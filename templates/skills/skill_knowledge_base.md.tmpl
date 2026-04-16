@@ -1,0 +1,94 @@
+---
+name: knowledge-base
+description: |
+  theking 项目知识库管理 — 知识写入位置、生命周期、PLACEHOLDER 检测与自动填充。
+  触发词：知识沉淀、项目分析、技术调研、架构决策、知识库、context、memory。
+---
+
+# Knowledge Base
+
+本 skill 定义 {project_title} 的项目知识库管理规范。`.theking/` 目录是项目知识的唯一真相源，随项目一起成长。
+
+## 知识目录结构
+
+| 目录 | 用途 | 生命周期 |
+|------|------|---------|
+| `.theking/context/` | 稳定项目知识：架构、调研、技术选型 | 随项目持续积累 |
+| `.theking/memory/MEMORY.md` | 临时补充记忆，成熟后晋升到 context/ | 定期整理 |
+| `.theking/agents/` | agent 定义（canonical authored source） | 随 agent 能力演进 |
+| `.theking/commands/` | 共享命令定义（canonical authored source） | 随工作流演进 |
+| `.theking/skills/` | 项目级 skill（canonical authored source） | 随治理规则演进 |
+| `.theking/hooks/` | hook 脚本（canonical authored source） | 随治理规则演进 |
+| `.theking/verification/` | 验证画像与证据约束 | 随测试策略演进 |
+| `.theking/workflows/` | project / sprint / task / review 工件 | 每个 sprint 产生新工件 |
+
+## 写入位置
+
+| 产物类型 | 写入位置 | 示例 |
+|---------|---------|------|
+| 项目分析、技术调研 | `.theking/context/` | 竞品分析、技术选型报告 |
+| 架构决策 | `.theking/context/architecture.md` 或单独 ADR | ADR、模块划分、数据流 |
+| 上游/参考实现分析 | `.theking/context/` | upstream-analysis.md |
+| 临时发现、待确认 | `.theking/memory/MEMORY.md` | 实验结论、待验证假设 |
+| Sprint 过程分析 | task 目录内，通用部分提炼到 `context/` | spec 研究、方案对比 |
+
+## 知识生命周期
+
+```
+临时发现 -> memory/MEMORY.md -> 确认后晋升 -> context/*.md -> 持续维护
+```
+
+### 晋升规则
+
+- 在 memory 中经过至少一次 sprint 验证的条目，晋升到 `context/` 对应文件
+- 晋升后从 memory 中删除原条目
+- 如果内容属于架构决策，写入 `context/architecture.md` 或独立 ADR 文件
+- 如果内容属于开发流程，写入 `context/dev-workflow.md`
+
+### 整理时机
+
+- 每个 sprint 结束时整理一次 `memory/MEMORY.md`
+- 已正式化的条目删除
+- 已失效的条目删除并注明原因
+
+## PLACEHOLDER 检测与自动填充
+
+如果 `.theking/context/` 下的文件包含 `<!-- PLACEHOLDER -->` 标记，说明知识库尚未填充实际内容。需要主动分析项目并填充。
+
+### 分析流程
+
+1. **扫描项目结构** — `ls` 顶层目录、读 `package.json` / `Cargo.toml` / `pyproject.toml` / `Makefile` / `Dockerfile` 等配置文件
+2. **识别技术栈** — 语言、框架、构建工具、测试框架、部署方式
+3. **理解核心模块** — 源码目录结构、关键入口文件、主要依赖
+4. **填充 context/ 文件** — 用分析结果替换 PLACEHOLDER 注释：
+   - `project-overview.md` — 全局视角：多模块关系、全景架构、各模块定位
+   - `architecture.md` — 目录结构、模块划分、数据流、关键依赖
+   - `dev-workflow.md` — 安装依赖、启动开发、运行测试、构建、代码检查命令
+5. **填充 workflows/<slug>/project.md** — 本仓库/模块视角：mission、tech stack、成功标准
+6. **记录不确定项** — 无法确认的发现写入 `memory/MEMORY.md`
+
+### context/ vs workflows/project.md
+
+两者不是重复，而是不同粒度：
+
+| | context/project-overview.md | workflows/\<slug\>/project.md |
+|--|---|---|
+| 范围 | 全局：可能覆盖多模块、多仓库 | 本仓库/本模块 |
+| 内容 | 全景架构、各模块关系、入口 | 本模块 mission、tech stack、成功标准 |
+| 生命周期 | 随项目持续积累 | 随 workflow 演进 |
+
+### 分析原则
+
+- 只写你能从代码中确认的事实，不编造
+- PLACEHOLDER 标记里有具体指令，按指令分析
+- 填充后删除 `<!-- PLACEHOLDER: ... -->` 注释
+- 不确定的内容写 `memory/MEMORY.md`，不写 `context/`
+- 如果项目已有 README 或其他文档，优先从中提取信息
+
+## 原则
+
+- `.theking/context/` 是稳定知识，不轻易删除
+- `.theking/memory/MEMORY.md` 定期整理，已正式化的条目删除
+- Sprint 里的分析产物有复用价值的，提炼到 `context/`
+- `CLAUDE.md` / `CODEBUDDY.md` / `AGENTS.md` 只做入口适配，不在里面写规则
+- Runtime 暴露目录（`.claude/`、`.codebuddy/`、`.github/`）不维护第二套规则

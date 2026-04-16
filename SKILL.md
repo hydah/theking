@@ -1,121 +1,81 @@
 ---
 name: theking
-description: theking：严格的 spec-driven 长程任务工作流。适用于需要把需求拆成 project、sprint、task、spec、review 层级，并强制执行 planner、tdd-guide、code-reviewer、e2e-runner、security-reviewer 协作的场景。触发词包括 spec-driven、sprint、task、review loop、长程任务、任务拆解、TDD workflow、agent collaboration、SDD、评审闭环、持续 review。
+description: theking：项目知识库 + spec-driven 长程任务工作流。初始化后生成项目级 skill（workflow-governance、knowledge-base），日常开发由项目级 skill 接管。触发词包括 spec-driven、sprint、task、review loop、长程任务、任务拆解、TDD workflow、agent collaboration、SDD、评审闭环、持续 review、项目知识库、知识沉淀、分析文档。
 ---
 
 # theking
 
-theking 把长程交付压成可执行的固定流程，而不是靠记忆维持纪律。这里要区分两层：skill 负责要求 agent 协作顺序，workflowctl 负责校验 artifact、状态机和 review 约束。
+theking 是**安装器**：首次使用时初始化项目的 `.theking/` 知识库和治理体系。初始化完成后，日常开发由两个项目级 skill 接管：
 
-当前项目自身的 canonical KB 位于 `.theking/`，而根目录 `SKILL.md` 是运行时入口。
+- **workflow-governance** — 开发工作流治理（状态机、硬规则、分流决策、review loop、agent 触发）
+- **knowledge-base** — 项目知识沉淀（写入位置、生命周期、PLACEHOLDER 检测与自动填充）
 
-## 何时使用
+## Bootstrap（唯一职责）
 
-- 任务会持续数小时到数天，不能只靠对话上下文维持
-- 需要把需求拆成 project、sprint、task、spec、review 多层级
-- 需要强制执行 red -> green -> refactor -> review 的节奏
-- 需要把 review -> feedback -> modify -> review 变成显式工件
+**必须先运行以下命令**确保项目已初始化。此命令幂等，重复运行不会覆盖已有文件：
 
-## 不可跳过的硬规则
+```bash
+workflowctl ensure --root <WORKFLOW_ROOT> --project-slug <PROJECT_SLUG>
+```
 
-1. 先规划，再写代码。复杂任务先启动 planner。
-2. 先红后绿。实现前先启动 tdd-guide，必要时补 e2e-runner。
-3. 每次代码改动都要进入 code-reviewer。触及 auth、input、api 的任务，以及 `backend.http` 画像任务，额外进入 security-reviewer。
-4. 没有 spec.md，不进入实现。
-5. 没有 resolved review，不进入 done。
+其中：
+- `workflowctl` 是已安装到 PATH 的 theking CLI 命令
+- `<WORKFLOW_ROOT>` 是项目根目录的父目录
+- `<PROJECT_SLUG>` 是项目名的 kebab-case 形式
 
-## Artifact 合同
+例如，对于 `/home/user/code/my-app` 项目：
+```bash
+workflowctl ensure --root /home/user/code --project-slug my-app
+```
 
-每个任务最少有这些文件：
+此命令会：
+1. 创建 `.theking/` 目录结构（context、memory、agents、commands、skills、hooks、prompts、verification、workflows）
+2. 在 `.theking/agents|commands|skills|hooks|prompts` 下生成共享 authored 资产
+3. 生成 `.claude/agents|commands|skills/` 与 `.codebuddy/agents|commands|skills/` 暴露层（优先软链到 `.theking/` 下对应目录，失败回退为复制）
+4. 生成 `.github/skills/` 和 `.github/prompts/` 导出层
+5. 生成 `.claude/settings.json` 和 `.codebuddy/settings.json`（包含 PreToolUse/PostToolUse hooks）
+6. 生成 `CLAUDE.md` / `CODEBUDDY.md` / `AGENTS.md` 入口文件
+7. 生成 `project.md`（如果不存在）
+
+## Post-Bootstrap
+
+初始化完成后，检查 `.theking/context/` 下的文件是否包含 `<!-- PLACEHOLDER -->` 标记。如果有，按 knowledge-base skill 的分析流程主动填充。
+
+之后的所有开发工作流和知识沉淀操作，由项目级 skill 接管，不再需要本 skill。
+
+## 初始化产物
 
 ```text
-<root>/<project-slug>/
-└── .theking/
-    ├── context/
-    ├── memory/
-    ├── verification/
-    └── workflows/
-        └── <project-slug>/
-            ├── project.md
-            └── sprints/
-                └── sprint-001-<theme>/
-                    └── tasks/
-                        └── TASK-001-<slug>/
-                            ├── task.md
-                            ├── spec.md
-                            ├── review/
-                            └── verification/
-                                └── <profile-dir>/
+<project>/
+├── .theking/
+│   ├── README.md
+│   ├── bootstrap.md          ← 多工具共享入口
+│   ├── context/              ← 稳定项目知识
+│   ├── memory/               ← 临时补充记忆
+│   ├── agents/               ← 10 个 agent 定义（canonical authored source）
+│   ├── commands/             ← 共享命令定义
+│   ├── skills/               ← 项目级 skill（canonical authored source）
+│   │   ├── workflow-governance/SKILL.md
+│   │   └── knowledge-base/SKILL.md
+│   ├── hooks/                ← hook 脚本 authored source
+│   ├── prompts/              ← GitHub Copilot prompt authored source
+│   ├── verification/         ← 验证画像
+│   ├── runs/                 ← 临时运行产物
+│   └── workflows/<slug>/    ← project / sprint / task 工件
+├── CLAUDE.md                 ← Claude Code 入口 → .theking/bootstrap.md
+├── CODEBUDDY.md              ← CodeBuddy 入口 → .theking/bootstrap.md
+├── AGENTS.md                 ← 通用 agent 入口 → .theking/bootstrap.md
+├── .claude/
+│   ├── agents/               ← runtime 暴露层（优先软链）
+│   ├── commands/             ← runtime 暴露层（优先软链）
+│   ├── skills/               ← runtime 暴露层（优先软链）
+│   └── settings.json
+├── .github/
+│   ├── prompts/              ← GitHub Copilot 导出层
+│   └── skills/               ← GitHub Copilot 导出层
+└── .codebuddy/
+    ├── agents/               ← runtime 暴露层（优先软链）
+    ├── commands/             ← runtime 暴露层（优先软链）
+    ├── skills/               ← runtime 暴露层（优先软链）
+    └── settings.json
 ```
-
-task.md 最少包含：
-
-- id
-- title
-- status
-- status_history
-- task_type
-- execution_profile
-- verification_profile
-- requires_security_review
-- required_agents
-- current_review_round
-
-## 操作顺序
-
-### 1. 初始化项目骨架
-
-```bash
-python3 scripts/workflowctl.py init-project --root <workflow-root> --project-slug <project-slug>
-```
-
-这一步会默认在目标项目根下创建 `.theking/` scaffold。
-
-### 2. 初始化 Sprint
-
-```bash
-python3 scripts/workflowctl.py init-sprint --root <workflow-root> --project-slug <project-slug> --theme <theme>
-```
-
-### 3. 初始化 Task
-
-```bash
-python3 scripts/workflowctl.py init-task --root <workflow-root> --project-slug <project-slug> --sprint <sprint-name> --slug <task-slug> --title <title> --task-type <task-type> --execution-profile <execution-profile>
-```
-
-### 4. 执行任务
-
-- 读取 task.md 和 spec.md
-- 按 required_agents 顺序推进
-- 每次状态变化都更新 status 和 status_history
-- 当状态切到 `in_review` 时，把 `current_review_round` 更新到对应轮次
-
-### 5. 校验任务
-
-```bash
-python3 scripts/workflowctl.py check --task-dir <task-dir>
-```
-
-校验至少会拦住这些问题：
-
-- task.md、spec.md、review 缺失
-- verification 缺失或与 execution_profile 不一致
-- spec.md 缺少 Acceptance 或 Test Plan
-- task_type、execution_profile、verification_profile、requires_security_review、required_agents 不一致
-- 状态跳跃，例如 planned 直接 done
-- blocked 被当作状态机快捷通道
-- ready_to_merge 或 done 前缺少从 round 001 到 current_review_round 的 review 配对文件
-- requires_security_review 或 verification_profile 包含 web.browser 但缺少对应 review 配对文件
-
-## Review Loop 约定
-
-- reviewer 产出 review/code-review-round-001.md
-- 修改者产出 review/code-review-round-001.resolved.md
-- 如果继续下一轮，先进入 `in_review`，并把 `current_review_round` 更新为新轮次
-- changes_requested 之后不能直接 done，必须回到 red 或 in_review
-
-## 当前边界
-
-- 当前 CLI 只做 init-project、init-sprint、init-task、check
-- review round 文件目前按固定命名校验，尚未自动生成
-- 当前 focus 是把 `.theking` scaffold、workflow 骨架和验证约束做实，不直接自动调度 subagent，也不负责 dashboard 和自动汇总

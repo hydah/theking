@@ -1,0 +1,1 @@
+"""theking CLI package."""

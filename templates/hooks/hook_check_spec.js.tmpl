@@ -1,0 +1,64 @@
+// theking hook: check that active task has spec.md before allowing code edits
+// Usage: piped from Claude Code PreToolUse hook via stdin (JSON)
+const fs = require('fs');
+const path = require('path');
+
+let data = '';
+process.stdin.on('data', chunk => data += chunk);
+process.stdin.on('end', () => {
+  try {
+    const input = JSON.parse(data);
+    const filePath = input.tool_input?.file_path || '';
+
+    // Skip non-source-code edits
+    if (filePath.includes('.theking/') || filePath.includes('.claude/') || filePath.includes('/test')) {
+      process.stdout.write(data);
+      return;
+    }
+
+    // Find .theking directory
+    let dir = process.cwd();
+    let thekingDir = null;
+    for (let i = 0; i < 10; i++) {
+      const candidate = path.join(dir, '.theking');
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        thekingDir = candidate;
+        break;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+
+    if (!thekingDir) {
+      process.stdout.write(data);
+      return;
+    }
+
+    const activeTaskFile = path.join(thekingDir, 'active-task');
+    if (!fs.existsSync(activeTaskFile)) {
+      process.stderr.write('[theking] No active task set. Run: workflowctl activate --task-dir <path>\n');
+      process.stdout.write(data);
+      return;
+    }
+
+    const taskDir = fs.readFileSync(activeTaskFile, 'utf-8').trim();
+    const taskMdPath = path.join(taskDir, 'task.md');
+    if (!fs.existsSync(taskMdPath)) {
+      process.stderr.write('[theking] BLOCKED: active-task does not point to a valid task directory.\n');
+      process.stderr.write(`[theking] Task: ${taskDir}\n`);
+      process.exit(1);
+    }
+    const specPath = path.join(taskDir, 'spec.md');
+    if (!fs.existsSync(specPath)) {
+      process.stderr.write('[theking] BLOCKED: spec.md does not exist for active task.\n');
+      process.stderr.write('[theking] Write spec.md before implementing code.\n');
+      process.stderr.write(`[theking] Task: ${taskDir}\n`);
+      process.exit(1);
+    }
+
+    process.stdout.write(data);
+  } catch (e) {
+    process.stdout.write(data);
+  }
+});

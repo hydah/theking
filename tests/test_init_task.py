@@ -29,6 +29,8 @@ def parse_frontmatter(text: str) -> dict[str, object]:
     for line in lines[1:]:
         if line.strip() == "---":
             return data
+        if not line.strip():
+            continue
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:\s*$", line.strip()):
             current_key = line.strip()[:-1]
             data[current_key] = []
@@ -133,6 +135,7 @@ def test_init_task_creates_minimal_task_tree_and_required_fields(tmp_path: Path)
         "verification_profile:",
         "requires_security_review:",
         "required_agents:",
+        "depends_on:",
         "current_review_round:",
         "status_history:",
     ):

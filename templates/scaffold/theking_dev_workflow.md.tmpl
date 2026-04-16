@@ -1,0 +1,67 @@
+# Dev Workflow
+
+## 环境准备
+
+<!-- PLACEHOLDER: 检查项目根目录的 .nvmrc / .python-version / .tool-versions / Dockerfile 等，列出环境依赖和安装步骤 -->
+
+## 本地开发
+
+<!-- PLACEHOLDER: 检查 package.json scripts / Makefile / Cargo.toml / pyproject.toml 等，找到以下命令并填写 -->
+
+```bash
+# 安装依赖
+# <!-- PLACEHOLDER: npm install / pip install / cargo build 等 -->
+
+# 启动开发服务
+# <!-- PLACEHOLDER: npm run dev / make run / cargo run 等 -->
+
+# 运行测试
+# <!-- PLACEHOLDER: npm test / pytest / cargo test 等 -->
+
+# 构建
+# <!-- PLACEHOLDER: npm run build / make build 等 -->
+
+# 代码检查
+# <!-- PLACEHOLDER: npm run lint / ruff check 等 -->
+```
+
+## 测试策略
+
+<!-- PLACEHOLDER: 检查测试目录结构（tests/ / __tests__ / spec/ / e2e/），描述测试分层 -->
+
+## 验证画像
+
+### web.browser
+
+- 启用浏览器或 Playwright
+- 验证关键用户路径、控制台错误、页面截图或 trace
+
+### backend.http
+
+- 启动服务后做黑盒 HTTP 请求
+- 覆盖核心 API 路径、错误码和依赖交互
+
+### backend.cli
+
+- 以子进程方式运行 CLI 或脚本
+- 验证退出码、stdout/stderr、输出文件
+
+### backend.job
+
+- 触发 worker / job 执行
+- 验证产物、状态变更或下游副作用
+
+## workflowctl
+
+以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。`--root ..` 指向目标项目的父目录，也就是 workflow root：
+
+```bash
+{theking_cmd} init-project --root {workflow_root_quoted} --project-slug {project_slug}
+{theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme foundation
+{theking_cmd} init-task --root {workflow_root_quoted} --project-slug {project_slug} --sprint sprint-001-foundation --slug demo --title "Demo" --task-type frontend --execution-profile web.browser
+{theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status planned
+{theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status red
+{theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status green
+{theking_cmd} init-review-round --task-dir {demo_task_dir_quoted}
+{theking_cmd} check --task-dir {demo_task_dir_quoted}
+```

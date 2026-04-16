@@ -1,0 +1,56 @@
+# Agent Catalog
+
+这里记录 {project_slug} 当前纳管的 agent、职责边界和定义文件。
+
+## Agent 定义文件
+
+每个 agent 的完整 prompt body 在 `.theking/agents/` 下：
+
+| 文件 | Agent | 封号 | 用途 |
+|------|-------|------|------|
+| `planner.md` | planner | 中书令 | 起草方略，输出 plan.json 格式的 task 列表 |
+| `tdd-guide.md` | tdd-guide | 门下侍中 | 封驳审核，先验后行，读取 spec.md 驱动测试设计 |
+| `code-reviewer.md` | code-reviewer | 御史大夫 | 独立监察，输出 code-review-round-NNN.md |
+| `security-reviewer.md` | security-reviewer | 刑部尚书 | 安全审谳，输出 security-review-round-NNN.md |
+| `e2e-runner.md` | e2e-runner | 兵部尚书 | 全线操演，输出 e2e-review-round-NNN.md |
+| `architect.md` | architect | 太傅 | 定大政方针，输出 ADR 文档 |
+| `build-error-resolver.md` | build-error-resolver | 工部尚书 | 排障修复，最小 diff |
+| `perf-optimizer.md` | perf-optimizer | 户部尚书 | 度支钱粮，性能分析与优化 |
+| `doc-updater.md` | doc-updater | 礼部尚书 | 修史编典，维护 .theking/context/ |
+| `refactor-cleaner.md` | refactor-cleaner | 吏部尚书 | 裁汰冗员，死代码清理 |
+
+Claude Code runtime 暴露在 `.claude/agents/` 下，CodeBuddy runtime 暴露在 `.codebuddy/agents/` 下（init-project / ensure 时自动生成，优先软链到 `.theking/agents/`，失败时回退为复制）。
+
+## 触发规则
+
+### 必须 agent
+
+| Agent | 封号 | 默认触发时机 |
+|-------|------|-------------|
+| tdd-guide | 门下侍中 | 新功能、bug 修复、合同重构 |
+| code-reviewer | 御史大夫 | 每次代码改动完成后 |
+
+### 条件必须 agent
+
+| Agent | 封号 | 触发条件 |
+|-------|------|---------|
+| e2e-runner | 兵部尚书 | `web.browser` 画像任务 |
+| security-reviewer | 刑部尚书 | `backend.http` 或 auth/input/api 相关任务 |
+
+### 按需 agent
+
+| Agent | 封号 | 适用场景 |
+|-------|------|---------|
+| planner | 中书令 | 复杂特性规划（3+ task） |
+| architect | 太傅 | 架构决策、系统设计 |
+| build-error-resolver | 工部尚书 | 构建失败时 |
+| perf-optimizer | 户部尚书 | 性能瓶颈、资源优化 |
+| doc-updater | 礼部尚书 | Sprint 结束、架构变更后 |
+| refactor-cleaner | 吏部尚书 | 代码清理、死代码移除 |
+
+## 维护原则
+
+- `.theking/agents/*.md` 是 canonical authored source
+- `.claude/agents/` 和 `.codebuddy/agents/` 是 runtime 暴露层，优先软链到 `.theking/agents/`
+- 若运行环境不支持软链，`ensure` 会回退为物理复制
+- 不在 runtime 目录里维护第二套规则

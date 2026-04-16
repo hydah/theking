@@ -1,0 +1,57 @@
+---
+description: 分析项目源码，填充 .theking/context/ 知识库
+---
+
+# Analyze Project
+
+扫描项目结构和源码，填充 `.theking/context/` 下的知识文档。
+
+## Usage
+
+`/analyze-project [full|incremental]`
+
+## Full 分析（默认，首次使用）
+
+检查 `.theking/context/` 下是否有 `<!-- PLACEHOLDER -->` 标记。如果有，逐项分析填充。
+
+### 1. 扫描项目结构
+
+- `ls` 顶层目录
+- 读取配置文件：`package.json` / `Cargo.toml` / `pyproject.toml` / `go.mod` / `Makefile` / `Dockerfile`
+- 识别：语言、框架、构建工具、测试框架
+
+### 2. 填充 project-overview.md
+
+- 一句话说明项目解决什么问题
+- 负责范围（3-5 条核心职责）
+- 代码主入口、启动命令、测试命令
+- 技术栈列表
+- 关键术语
+
+### 3. 填充 architecture.md
+
+- 目录结构注释（tree depth=2）
+- 关键模块表（模块、路径、作用、依赖）
+- 核心数据流描述
+- 架构风险点
+
+### 4. 填充 dev-workflow.md
+
+- 环境准备步骤
+- 开发命令（install / dev / test / build / lint）
+- 测试分层描述
+
+### 5. 记录不确定项
+
+无法确认的发现写入 `.theking/memory/MEMORY.md`。
+
+## Incremental 分析
+
+项目有新增模块或重大变更时，重新扫描并更新 `context/` 中过时的内容。不覆盖已有手写内容，只补充新发现。
+
+## 原则
+
+- 只写能从代码中确认的事实，不编造
+- 填充后删除 `<!-- PLACEHOLDER: ... -->` 注释
+- 不确定的内容只写 `memory/MEMORY.md`
+- 已有 README 或文档优先提取

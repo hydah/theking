@@ -1,0 +1,1 @@
+"""Packaged template assets for theking."""

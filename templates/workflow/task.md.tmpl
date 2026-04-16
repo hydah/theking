@@ -11,15 +11,17 @@ verification_profile:
 requires_security_review: {requires_security_review}
 required_agents:
 {required_agents_block}
+depends_on:
+{depends_on_block}
 current_review_round: 0
 ---
 
 ## Goal
-- Describe the outcome, not the implementation.
+<!-- Describe the expected OUTCOME, not the implementation.
+     Example: "Users can log in via OAuth and see their personal dashboard." -->
 
 ## Constraints
 - Keep scope minimal until the current review round is closed.
-
-## Notes
-- Update status_history on every state change.
-- When status enters `in_review`, set current_review_round to that review round number.
+- Update status and status_history on every state change.
+- When status enters `in_review`, set current_review_round to the new round number.
+- Do not start implementation before spec.md is filled in and task reaches `planned`.

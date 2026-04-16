@@ -16,9 +16,7 @@
 
 - `context/` — 稳定项目知识
 - `memory/` — 长期补充记忆
-- `agents/` — 项目内 agent catalog 与适配说明
-- `commands/` — 可选命令源码
-- `skills/` — 可选 skill 源码
+- `agents/` / `commands/` / `skills/` / `hooks/` / `prompts/` — AI 协作 authored source
 - `verification/` — 验证画像、约束与资产规范
 - `workflows/` — project / sprint / task / review 工件
 - `runs/` — 临时运行产物、trace、截图
@@ -26,6 +24,7 @@
 ## 维护原则
 
 - `.theking/` 是唯一真相源，运行时入口只做暴露
+- `.theking/agents/`、`.theking/commands/`、`.theking/skills/`、`.theking/hooks/`、`.theking/prompts/` 是项目级 AI authored source
 - 正式规则优先写入 `bootstrap.md` 或 `context/`
 - `memory/MEMORY.md` 只保留尚未正式化的补充约定
 - workflow 工件统一放到 `workflows/`

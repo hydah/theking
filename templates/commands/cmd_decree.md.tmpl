@@ -1,0 +1,128 @@
+---
+description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/decree <需求描述>"
+---
+
+# 👑 Decree — 奉旨开发
+
+皇帝一道旨意下去，群臣领旨办事。
+
+**治理规则与朝廷架构**以 `.theking/skills/workflow-governance/SKILL.md` 为准，本命令只管编排。
+
+以下 `workflowctl` 命令默认在项目根目录执行，并依赖本机已安装的 `workflowctl` 入口。
+
+## Usage
+
+```
+/decree <需求描述>
+```
+
+示例：
+```
+/decree 实现用户登录功能，支持 OAuth 和手机验证码
+/decree 重构数据库连接池，支持读写分离
+/decree 给 dashboard 加上实时通知
+/decree 修复登录页 token 过期不刷新的 bug
+```
+
+## 流程
+
+收到旨意后，按以下步骤自动编排。**所有需求都必须先建 sprint，再写代码，无例外。**
+
+### Phase 1: 审旨 — 分流决策
+
+评估需求规模，选择流程级别（标准见 workflow-governance）：
+
+**完整流程**（3+ 文件、架构决策、> 30 分钟）：
+```
+👑 [decree] 此旨意走完整流程。
+理由：<一句话>
+下一步：召中书令（planner）谋划，创建 sprint。
+```
+
+**轻量流程**（≤ 2 文件、逻辑简单）：
+```
+👑 [decree] 此旨意走轻量流程。
+理由：<一句话>
+下一步：创建单 task sprint。
+```
+
+**⛔ 禁止在 Phase 2 完成前写任何实现代码。分流决策输出后，立即进入 Phase 2。**
+
+---
+
+### Phase 2: 谋划 — Sprint 规划（必须完成才能写代码）
+
+#### 完整流程
+
+1. 召 **中书令**（planner）起草方略，拆解需求为 task 列表
+2. 涉及架构决策时，先问 **太傅**（architect）
+3. 确认 task 间依赖关系（DAG）
+4. 创建 sprint + 批量创建 task：
+   ```bash
+   {theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
+   {theking_cmd} init-sprint-plan --root {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --plan-file plan.json
+   ```
+5. 输出 Task Overview 表和依赖图，呈御览
+
+#### 轻量流程
+
+1. 创建单 task sprint（跳过 planner）：
+   ```bash
+   {theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
+   {theking_cmd} init-task --root {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --slug <slug> --title <title> --task-type <type>
+   ```
+
+**✅ 检查点：sprint 和 task 已创建，才能进入 Phase 3。**
+
+---
+
+### Phase 3: 领旨 — 开发
+
+按依赖图拓扑排序，无依赖的 task **并行启动**（轻量流程只有 1 个 task）。
+
+对每个 task：
+
+1. **激活**
+   ```bash
+   {theking_cmd} activate --task-dir <TASK_DIR>
+   ```
+
+2. **写 Spec**
+   - 完整流程：填写全部 section（scope、acceptance、test plan、edge cases）
+   - 轻量流程：只写 scope + acceptance
+
+3. **TDD 循环** — 召 **门下侍中**（tdd-guide）封驳审核：先写测试 → 最小实现 → 重构
+
+4. **Review** — 按 workflow-governance agent 触发规则：
+   - **御史大夫**（code-reviewer）— 必须
+   - **刑部尚书**（security-reviewer）— auth/input/api 或 backend.http 时
+   - **兵部尚书**（e2e-runner）— web.browser 时
+   - 有 CRITICAL/HIGH findings → 修复 → 再 review
+
+5. **构建失败** → 召 **工部尚书**（build-error-resolver）排障修复
+
+6. **性能问题** → 召 **户部尚书**（perf-optimizer）度支钱粮
+
+7. **校验**
+   ```bash
+   {theking_cmd} check --task-dir <TASK_DIR>
+   ```
+
+8. **完成** — status → `done`，停用 task
+
+---
+
+### Phase 4: 收旨 — 收尾
+
+1. Sprint 级校验：
+   ```bash
+   {theking_cmd} sprint-check --sprint-dir <SPRINT_DIR>
+   ```
+2. 完整流程：召 **吏部尚书**（refactor-cleaner）裁汰冗余代码
+3. 知识提炼 — 有复用价值的分析产物提炼到 `.theking/context/`
+4. 完整流程：召 **礼部尚书**（doc-updater）修史编典
+5. 停用：
+   ```bash
+   {theking_cmd} deactivate --project-dir {project_dir_quoted}
+   ```
+6. 汇报旨意执行结果

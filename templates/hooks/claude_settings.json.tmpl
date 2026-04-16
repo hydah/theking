@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "(tool == \"Edit\" || tool == \"Write\") && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .theking/hooks/check-spec-exists.js"
+          }
+        ],
+        "description": "[theking] Block code edits until spec.md exists for active task"
+      },
+      {
+        "matcher": "(tool == \"Edit\" || tool == \"Write\") && tool_input.file_path not matches \"test\" && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .theking/hooks/check-task-status.js"
+          }
+        ],
+        "description": "[theking] Block implementation until task reaches red (tests written first)"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "(tool == \"Edit\" || tool == \"Write\") && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .theking/hooks/remind-review.js"
+          }
+        ],
+        "description": "[theking] Remind: code-reviewer required after code changes"
+      }
+    ]
+  }
+}

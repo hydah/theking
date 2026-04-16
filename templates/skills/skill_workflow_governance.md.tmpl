@@ -1,0 +1,184 @@
+---
+name: workflow-governance
+description: |
+  theking 开发工作流治理 — 状态机、分流决策、硬规则、review loop、agent 触发。
+  触发词：开发工作流、sprint、task、spec、review、TDD、状态机、agent 协作。
+---
+
+# Workflow Governance
+
+本 skill 定义 {project_title} 的开发工作流纪律。所有 AI agent 在执行编码任务时必须遵守以下规则。
+
+## 核心原则
+
+**所有需求都通过 sprint 跟踪**，无论大小。区别在于流程轻重，不在于是否跟踪。
+
+## 分流决策（每次任务的第一步）
+
+收到任务后，评估规模，选择流程级别：
+
+### 完整流程
+
+```
+👑 [decree] 此旨意走完整流程。
+理由：<一句话>
+```
+
+条件：改动涉及 3+ 文件、需要架构决策、预估 > 30 分钟、多 task 依赖。
+
+- planner 拆解为多 task + 依赖图
+- 每个 task 写完整 spec（scope、acceptance、test plan、edge cases）
+- 多轮 review loop
+- 知识提炼
+
+### 轻量流程
+
+```
+👑 [decree] 此旨意走轻量流程。
+理由：<一句话>
+```
+
+条件：改动 ≤ 2 文件、逻辑简单、无架构影响。
+
+- 单 task sprint（跳过 planner）
+- spec 只写 scope + acceptance
+- 通常 1 轮 review
+- 知识提炼按需
+
+### 对比表
+
+| 环节 | 完整流程 | 轻量流程 |
+|------|---------|---------|
+| 创建 sprint + task | ✓ 多 task | ✓ 单 task |
+| planner 拆解 | ✓ | 跳过 |
+| spec.md | 完整填写 | scope + acceptance |
+| tdd-guide | **必须** | **必须** |
+| code-reviewer | **必须** | **必须** |
+| security/e2e review | 条件触发 | 条件触发 |
+| 多轮 review loop | 可能多轮 | 通常 1 轮 |
+| 知识提炼 | ✓ | 按需 |
+
+**不变的底线**：无论哪种流程，sprint 跟踪、TDD、code-review 不可绕过。
+
+## 硬规则
+
+1. **所有需求都有 sprint** — sprint 是最小跟踪单元，不可绕过
+2. **先红后绿** — 实现前先启动 tdd-guide（门下侍中），必要时补 e2e-runner（兵部尚书）
+3. **每次改动必须 review** — 御史大夫（code-reviewer）是必经之路；触及 auth/input/api 或 `backend.http` 画像任务，额外召 刑部尚书（security-reviewer）
+4. **没有 spec.md 不进入实现** — 轻量流程也要写 scope + acceptance
+5. **没有 resolved review 不进入 done** — review pair 必须完整
+
+## 状态机
+
+```
+draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
+                                       |               ^
+                                changes_requested -> red/in_review
+
+任何状态(除 done) 可进入 blocked，必须回到进入前的状态
+```
+
+## 操作顺序
+
+### 完整流程
+
+1. **Bootstrap** — `workflowctl ensure`（幂等）
+2. **规划 Sprint** — `init-sprint` + `init-sprint-plan`（planner 拆解，批量创建 task）
+3. **逐个 Task**：激活 → 写 spec → TDD → review → 校验 → done
+4. **Sprint 校验** — `sprint-check`
+5. **收尾** — 知识提炼 + `deactivate`
+
+### 轻量流程
+
+1. **Bootstrap** — `workflowctl ensure`（幂等）
+2. **创建单 Task Sprint** — `init-sprint` + `init-task`（跳过 planner）
+3. **激活** → 写简化 spec（scope + acceptance） → TDD → review → 校验 → done
+4. **停用** — `deactivate`
+
+### workflowctl 命令参考
+
+以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。
+
+```bash
+# 初始化项目
+{theking_cmd} ensure --root {workflow_root_quoted} --project-slug {project_slug}
+
+# 创建 sprint
+{theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme <THEME>
+
+# 批量创建 task（推荐）
+{theking_cmd} init-sprint-plan --root {workflow_root_quoted} --project-slug {project_slug} --sprint <SPRINT> --plan-file plan.json
+
+# 激活 / 停用 task
+{theking_cmd} activate --task-dir <TASK_DIR>
+{theking_cmd} deactivate --project-dir {project_dir_quoted}
+
+# 校验
+{theking_cmd} check --task-dir <TASK_DIR>
+{theking_cmd} sprint-check --sprint-dir <SPRINT_DIR>
+```
+
+## Review Loop
+
+- reviewer 产出 `review/code-review-round-NNN.md`（必须包含 `## Context` 和 `## Findings`）
+- 修改者产出 `review/code-review-round-NNN.resolved.md`（必须包含 `## Fixes` 和 `## Verification`）
+- `ready_to_merge` / `done` 前必须有 round 001 到 `current_review_round` 的全部 review pair
+- `requires_security_review: true` 时额外需要 security-review pair
+- `web.browser` 画像任务额外需要 e2e-review pair
+
+## Agent 触发表
+
+| Agent | 封号 | 出处 | 触发时机 | 是否必须 |
+|-------|------|------|---------|---------|
+| planner | 中书令 | 中书省 | 复杂特性规划（3+ stages） | 按需 |
+| tdd-guide | 门下侍中 | 门下省 | 新功能、bug 修复 | **必须** |
+| code-reviewer | 御史大夫 | 御史台 | 每次代码改动后 | **必须** |
+| security-reviewer | 刑部尚书 | 刑部 | auth/input/api 或 backend.http 任务 | 条件必须 |
+| e2e-runner | 兵部尚书 | 兵部 | web.browser 任务 | 条件必须 |
+| architect | 太傅 | 三公 | 架构决策 | 按需 |
+| build-error-resolver | 工部尚书 | 工部 | 构建失败时 | 按需 |
+| perf-optimizer | 户部尚书 | 户部 | 性能瓶颈、资源优化 | 按需 |
+| doc-updater | 礼部尚书 | 礼部 | Sprint 结束后 | 按需 |
+| refactor-cleaner | 吏部尚书 | 吏部 | 代码清理阶段 | 按需 |
+
+### 朝廷架构
+
+```
+              👑 皇帝（/decree）
+                    │
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+   ┌─────────┐ ┌─────────┐ ┌─────────┐
+   │ 中书省  │ │ 门下省  │ │ 御史台  │
+   │ 中书令  │ │ 侍中    │ │ 御史大夫│
+   │(planner)│ │(tdd-    │ │(code-   │
+   │ 起草方略│ │ guide)  │ │reviewer)│
+   └─────────┘ │先验后行 │ │独立监察 │
+               └─────────┘ └─────────┘
+        ┌──────────┬──────────┐
+        ▼          ▼          ▼
+   太傅(architect)  六部执行层
+   三公，定大政方针  ├─ 吏部（refactor-cleaner）裁汰冗员
+                    ├─ 户部（perf-optimizer）度支钱粮
+                    ├─ 礼部（doc-updater）修史编典
+                    ├─ 兵部（e2e-runner）全线操演
+                    ├─ 刑部（security-reviewer）安全审谳
+                    └─ 工部（build-error-resolver）排障修复
+```
+
+## Artifact 合同
+
+```text
+.theking/workflows/{project_slug}/
+├── project.md
+└── sprints/sprint-NNN-<theme>/
+    ├── sprint.md
+    └── tasks/TASK-NNN-<slug>/
+        ├── task.md
+        ├── spec.md
+        ├── review/
+        │   ├── code-review-round-001.md
+        │   ├── code-review-round-001.resolved.md
+        │   └── ...
+        └── verification/<profile>/
+```

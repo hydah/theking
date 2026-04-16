@@ -1,0 +1,11 @@
+// theking hook: remind agent that code-reviewer is mandatory after code changes
+// Usage: piped from Claude Code PostToolUse hook via stdin (JSON)
+let data = '';
+process.stdin.on('data', chunk => data += chunk);
+process.stdin.on('end', () => {
+  process.stderr.write('[theking] Code changed. Mandatory before completing:\n');
+  process.stderr.write('  - code-reviewer (every code change)\n');
+  process.stderr.write('  - security-reviewer (if auth/input/API touched)\n');
+  process.stderr.write('  - tdd-guide (if new feature or bug fix)\n');
+  process.stdout.write(data);
+});

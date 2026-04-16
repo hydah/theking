@@ -75,6 +75,19 @@ def profile_dir_name(profile: str) -> str:
     }[profile]
 
 
+def verification_result_markdown(profile: str) -> str:
+    return "\n".join(
+        [
+            "# Verification Result",
+            "",
+            f"- Profile: {profile}",
+            "- Command: uv run --with pytest pytest tests -q",
+            "- Outcome: passed",
+            "",
+        ]
+    )
+
+
 def make_valid_task_tree(
     base_dir: Path,
     *,
@@ -86,10 +99,12 @@ def make_valid_task_tree(
     verification_profile: list[str] | None = None,
     requires_security_review: bool | None = None,
     required_agents: list[str] | None = None,
+    depends_on: list[str] | None = None,
     include_task: bool = True,
     include_spec: bool = True,
     include_review_dir: bool = True,
     include_verification_dir: bool = True,
+    include_verification_evidence: bool | None = None,
     use_theking_layout: bool = True,
     workflow_project_name: str = "demo-app",
 ) -> Path:
@@ -125,6 +140,8 @@ def make_valid_task_tree(
         if security_review:
             agents.append("security-reviewer")
 
+    task_depends_on = depends_on or []
+
     if include_task:
         task_content = "\n".join(
             [
@@ -141,6 +158,8 @@ def make_valid_task_tree(
                 f"requires_security_review: {'true' if security_review else 'false'}",
                 "required_agents:",
                 *[f"  - {agent}" for agent in agents],
+                "depends_on:",
+                *[f"  - {dep}" for dep in task_depends_on],
                 f"current_review_round: {current_review_round}",
                 "---",
                 "",
@@ -175,7 +194,13 @@ def make_valid_task_tree(
 
     if include_verification_dir:
         for profile in verification:
-            (verification_dir / profile_dir_name(profile)).mkdir(parents=True, exist_ok=True)
+            profile_dir = verification_dir / profile_dir_name(profile)
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            should_write_evidence = include_verification_evidence
+            if should_write_evidence is None:
+                should_write_evidence = status in {"ready_to_merge", "done"}
+            if should_write_evidence:
+                write_text(profile_dir / "result.md", verification_result_markdown(profile))
 
     return task_dir
 
@@ -308,6 +333,46 @@ def test_check_requires_review_pairs_for_merge_and_flagged_reviews(
 
     assert result.returncode != 0
     assert expected_fragment in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("status", "status_history", "evidence_content"),
+    [
+        (
+            "ready_to_merge",
+            ["draft", "planned", "red", "green", "in_review", "ready_to_merge"],
+            None,
+        ),
+        (
+            "done",
+            ["draft", "planned", "red", "green", "in_review", "ready_to_merge", "done"],
+            "",
+        ),
+    ],
+)
+def test_check_requires_non_empty_verification_evidence_for_closed_statuses(
+    tmp_path: Path,
+    status: str,
+    status_history: list[str],
+    evidence_content: str | None,
+) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status=status,
+        status_history=status_history,
+        current_review_round=1,
+        include_verification_evidence=False,
+    )
+    review_dir = task_dir / "review"
+    write_text(review_dir / "code-review-round-001.md", review_markdown("Code", 1))
+    write_text(review_dir / "code-review-round-001.resolved.md", resolved_review_markdown("Code", 1))
+    if evidence_content is not None:
+        write_text(task_dir / "verification" / "cli" / "result.md", evidence_content)
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0
+    assert "non-empty evidence file" in result.stderr
 
 
 def test_check_rejects_illegal_transition_from_planned_to_done(tmp_path: Path) -> None:
@@ -549,6 +614,35 @@ def test_check_accepts_changes_requested_with_review_but_without_resolved_file(t
     )
     review_dir = task_dir / "review"
     write_text(review_dir / "code-review-round-001.md", review_markdown("Code", 1))
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_check_accepts_first_in_review_round_without_current_round_review_files(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="in_review",
+        status_history=["draft", "planned", "red", "green", "in_review"],
+        current_review_round=1,
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_check_accepts_second_in_review_round_without_current_round_review_files(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="in_review",
+        status_history=["draft", "planned", "red", "green", "in_review", "changes_requested", "in_review"],
+        current_review_round=2,
+    )
+    review_dir = task_dir / "review"
+    write_text(review_dir / "code-review-round-001.md", review_markdown("Code", 1))
+    write_text(review_dir / "code-review-round-001.resolved.md", resolved_review_markdown("Code", 1))
 
     result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
 
