@@ -46,7 +46,8 @@ workflowctl ensure --project-dir . --project-slug my-app
 4. 生成 `.github/skills/` 和 `.github/prompts/` 导出层
 5. 生成 `.claude/settings.json` 和 `.codebuddy/settings.json`（包含 PreToolUse/PostToolUse hooks）
 6. 生成 `CLAUDE.md` / `CODEBUDDY.md` / `AGENTS.md` 入口文件
-7. 生成 `project.md`（如果不存在）
+7. 生成 `.kimi/agent.yaml` + `.kimi/agents/*.yaml`（Kimi Code CLI 原生 YAML agent + 10 份 subagents），并 symlink `.kimi/skills/`、`.kimi/AGENTS.md`
+8. 生成 `project.md`（如果不存在）
 
 ## Bootstrap 后的工作流底线
 
@@ -113,7 +114,7 @@ workflowctl checkpoint --project-dir . --project-slug <PROJECT_SLUG> --phase pha
 │   └── workflows/<slug>/    ← project / sprint / task 工件
 ├── CLAUDE.md                 ← Claude Code 入口 → .theking/bootstrap.md
 ├── CODEBUDDY.md              ← CodeBuddy 入口 → .theking/bootstrap.md
-├── AGENTS.md                 ← 通用 agent 入口 → .theking/bootstrap.md
+├── AGENTS.md                 ← 通用 agent 入口 → .theking/bootstrap.md（Kimi 也读）
 ├── .claude/
 │   ├── agents/               ← runtime 暴露层（优先软链）
 │   ├── commands/             ← runtime 暴露层（优先软链）
@@ -122,9 +123,14 @@ workflowctl checkpoint --project-dir . --project-slug <PROJECT_SLUG> --phase pha
 ├── .github/
 │   ├── prompts/              ← GitHub Copilot 导出层
 │   └── skills/               ← GitHub Copilot 导出层
-└── .codebuddy/
-    ├── agents/               ← runtime 暴露层（优先软链）
-    ├── commands/             ← runtime 暴露层（优先软链）
-    ├── skills/               ← runtime 暴露层（优先软链）
-    └── settings.json
+├── .codebuddy/
+│   ├── agents/               ← runtime 暴露层（物化，CodeBuddy 方言 frontmatter）
+│   ├── commands/             ← runtime 暴露层（优先软链）
+│   ├── skills/               ← runtime 暴露层（优先软链）
+│   └── settings.json
+└── .kimi/
+    ├── agent.yaml            ← Kimi 主 agent（extend: default，声明 10 个 subagents）
+    ├── agents/               ← 10 份 subagent YAML，system_prompt_path → .theking/agents/*.md
+    ├── AGENTS.md             ← 软链到根 AGENTS.md
+    └── skills/               ← 软链到 .theking/skills/
 ```

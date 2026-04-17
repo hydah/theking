@@ -19,6 +19,7 @@ packages = [
 	"theking.templates.agents",
 	"theking.templates.commands",
 	"theking.templates.hooks",
+	"theking.templates.kimi",
 	"theking.templates.scaffold",
 	"theking.templates.skills",
 	"theking.templates.workflow",
@@ -30,6 +31,7 @@ theking = "scripts"
 "theking.templates.agents" = "templates/agents"
 "theking.templates.commands" = "templates/commands"
 "theking.templates.hooks" = "templates/hooks"
+"theking.templates.kimi" = "templates/kimi"
 "theking.templates.scaffold" = "templates/scaffold"
 "theking.templates.skills" = "templates/skills"
 "theking.templates.workflow" = "templates/workflow"
@@ -38,6 +40,7 @@ theking = "scripts"
 "theking.templates.agents" = ["*.tmpl"]
 "theking.templates.commands" = ["*.tmpl"]
 "theking.templates.hooks" = ["*.tmpl"]
+"theking.templates.kimi" = ["*.tmpl"]
 "theking.templates.scaffold" = ["*.tmpl"]
 "theking.templates.skills" = ["*.tmpl"]
 "theking.templates.workflow" = ["*.tmpl"]

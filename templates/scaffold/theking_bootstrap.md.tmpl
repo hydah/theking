@@ -32,14 +32,18 @@ theking 既是**项目知识库**，也是**工作流治理工具**：
 
 - `CLAUDE.md` → 回接本文件（Claude Code 入口）
 - `CODEBUDDY.md` → 回接本文件（CodeBuddy 入口）
-- `AGENTS.md` → 回接本文件（通用 agent 入口）
+- `AGENTS.md` → 回接本文件（通用 agent 入口，Kimi CLI 也读这份）
 - `.claude/agents/` / `.claude/commands/` / `.claude/skills/` → `.theking/` 下对应 authored source 的 Claude 暴露层（优先软链，失败回退为复制）
 - `.codebuddy/agents/` / `.codebuddy/commands/` / `.codebuddy/skills/` → `.theking/` 下对应 authored source 的 CodeBuddy 暴露层（优先软链，失败回退为复制）
+- `.kimi/skills/` → `.theking/skills/` 的 Kimi CLI 暴露层（软链，与 Claude/CodeBuddy 共享同一份 SKILL.md）
+- `.kimi/AGENTS.md` → 项目根 `AGENTS.md` 的软链（Kimi 会把项目根到工作目录所有 `AGENTS.md` 合并进 `${{KIMI_AGENTS_MD}}`）
+- `.kimi/agent.yaml` + `.kimi/agents/*.yaml` → 按 `.theking/agents/*.md` 派生出的 Kimi 原生 YAML agent 定义（`system_prompt_path` 指回 canonical md，编辑 md 即改 Kimi prompt）；用 `kimi --agent-file .kimi/agent.yaml` 启动
 - `.github/prompts/` → `.theking/prompts/` 的 GitHub Copilot 导出层
 - `.github/skills/` → `.theking/skills/` 的 GitHub Copilot 导出层
 - GitHub Copilot 只消费 `.github/prompts/` 与 `.github/skills/`，不导出 `.github/agents/` 或 `.github/commands/`
 - `.claude/settings.json` → hooks 配置
 - `.codebuddy/settings.json` → hooks 配置
+- Kimi CLI 当前官方不支持 lifecycle hooks，治理纪律依赖 `workflow-governance` skill 文本 + `workflowctl` 命令行校验
 
 ## 最小读取顺序
 

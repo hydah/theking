@@ -101,19 +101,22 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert "优先把 `--project-dir` 传当前项目根目录 `.`" in dev_workflow
     assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in governance_skill
     assert f"{PORTABLE_WORKFLOWCTL_CMD} deactivate --project-dir ." in governance_skill
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --project-dir . --project-slug demo-app --theme <theme>" in decree_command
+    # Phase 1-5 完整编排是 skill 的职责（唯一真相源）；decree 只做薄入口+对照表。
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --project-dir . --project-slug demo-app --theme <theme>" in governance_skill
     assert "先审上下文，再做分流" in governance_skill
     assert governance_skill.index("上下文初勘") < governance_skill.index("此旨意走<完整|轻量>流程")
     assert "light流程只减少规划开销" not in governance_skill
     assert "轻量流程只减少规划开销，不降低交付标准" in governance_skill
     assert "build/lint/type/unit + 画像验证" in governance_skill
-    assert "Phase 1: 察情" in decree_command
-    assert decree_command.index("Phase 1: 察情") < decree_command.index("Phase 2: 议旨")
-    assert "未察案牍、未勘波及，不得擅宣「轻量流程」" in decree_command
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in decree_command
-    assert "Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须保留" in decree_command
-    assert "build/lint/type/unit checks" in decree_command
+    assert "Phase 1: 察情" in governance_skill
+    assert governance_skill.index("Phase 1: 察情") < governance_skill.index("Phase 2: 议旨")
+    assert "未察案牍、未勘波及，不得擅宣「轻量流程」" in governance_skill
+    assert "Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须保留" in governance_skill
+    assert "build/lint/type/unit checks" in governance_skill
+    # decree 侧契约：薄入口必含 skill 指针 + 参数注入 + Phase 对照表
     assert ".theking/skills/workflow-governance/SKILL.md" in decree_command
+    assert "$ARGUMENTS" in decree_command
+    assert "Phase 1" in decree_command and "Phase 5" in decree_command
     assert "开发工作流底线" in bootstrap_doc
     assert "先做上下文初勘，再决定完整流程还是轻量流程" in bootstrap_doc
     assert "`init-task` 生成的 `spec.md` 是占位稿" in bootstrap_doc
@@ -176,7 +179,8 @@ def test_init_project_quotes_shell_paths_in_generated_examples(tmp_path: Path) -
     assert f"{PORTABLE_WORKFLOWCTL_CMD} check --task-dir {expected_demo_task}" in dev_workflow
     assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in governance_skill
     assert f"{PORTABLE_WORKFLOWCTL_CMD} deactivate --project-dir ." in governance_skill
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --project-dir . --project-slug demo-app --theme <theme>" in decree_command
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --project-dir . --project-slug demo-app --theme <theme>" in governance_skill
+    assert ".theking/skills/workflow-governance/SKILL.md" in decree_command
     for content in (dev_workflow, governance_skill, decree_command):
         assert str(root_with_space) not in content
         assert str(project_dir) not in content
@@ -1554,3 +1558,306 @@ def test_init_project_normalizes_legacy_runtime_hook_paths_in_existing_settings(
     settings_raw = (claude_dir / "settings.json").read_text(encoding="utf-8")
     assert ".theking/hooks/check-spec-exists.js" in settings_raw
     assert ".theking/runtime/hooks/check-spec-exists.js" not in settings_raw
+
+
+# ---------------------------------------------------------------------------
+# Kimi CLI runtime projections
+#
+# Kimi Code CLI (moonshotai) has three relevant surfaces:
+#
+#   * `.kimi/skills/` — project-level skills, identical SKILL.md format as
+#     Claude / CodeBuddy. We symlink it to `.theking/skills/` so skills stay
+#     canonical.
+#   * `.kimi/AGENTS.md` — Kimi merges AGENTS.md files from the project root
+#     down to the working directory (including `.kimi/AGENTS.md`) into the
+#     `${KIMI_AGENTS_MD}` system-prompt variable. We symlink `.kimi/AGENTS.md`
+#     to the project-root `AGENTS.md` so both paths resolve to the same file.
+#   * `.kimi/agent.yaml` + `.kimi/agents/*.yaml` — Kimi's native agent format
+#     (YAML). Subagents are declared in the main agent's `subagents:` map and
+#     point at `.kimi/agents/<role>.yaml`; each subagent `extend:`s the main
+#     agent and sets `system_prompt_path` to the canonical `.theking/agents/
+#     <role>.md` so the prompt body remains single-sourced.
+# ---------------------------------------------------------------------------
+
+
+KIMI_SUBAGENT_ROLES = [
+    "planner",
+    "tdd-guide",
+    "code-reviewer",
+    "security-reviewer",
+    "e2e-runner",
+    "architect",
+    "build-error-resolver",
+    "doc-updater",
+    "refactor-cleaner",
+    "perf-optimizer",
+]
+
+
+def test_init_project_kimi_skills_is_symlink_to_canonical(tmp_path: Path) -> None:
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    project_dir = tmp_path / "demo-app"
+    canonical_skills = project_dir / ".theking" / "skills"
+    kimi_skills = project_dir / ".kimi" / "skills"
+
+    assert_runtime_symlink(kimi_skills, canonical_skills)
+    for skill_name in SKILL_NAMES:
+        kimi_skill_md = kimi_skills / skill_name / "SKILL.md"
+        canonical_skill_md = canonical_skills / skill_name / "SKILL.md"
+        assert kimi_skill_md.is_file(), f"Missing .kimi/skills/{skill_name}/SKILL.md"
+        assert kimi_skill_md.read_text(encoding="utf-8") == canonical_skill_md.read_text(
+            encoding="utf-8"
+        )
+
+
+def test_init_project_kimi_agents_md_symlinks_to_project_root(tmp_path: Path) -> None:
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    project_dir = tmp_path / "demo-app"
+    root_agents_md = project_dir / "AGENTS.md"
+    kimi_agents_md = project_dir / ".kimi" / "AGENTS.md"
+
+    assert root_agents_md.is_file(), "Root AGENTS.md should exist"
+    assert kimi_agents_md.is_symlink(), ".kimi/AGENTS.md must be a symlink"
+    assert kimi_agents_md.resolve() == root_agents_md.resolve()
+    assert kimi_agents_md.read_text(encoding="utf-8") == root_agents_md.read_text(encoding="utf-8")
+
+
+def test_init_project_kimi_main_agent_yaml(tmp_path: Path) -> None:
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    project_dir = tmp_path / "demo-app"
+    main_agent = project_dir / ".kimi" / "agent.yaml"
+
+    assert main_agent.is_file(), "Missing .kimi/agent.yaml"
+    assert not main_agent.is_symlink()
+    content = main_agent.read_text(encoding="utf-8")
+
+    # Structural assertions — we don't lock an exact YAML byte-for-byte layout
+    # so later formatting tweaks don't break tests.
+    assert "version: 1" in content
+    assert "extend: default" in content, "Main agent must inherit default tool policy"
+    assert "name: theking-main" in content or "name: demo-app-main" in content, (
+        "Main agent must have a deterministic name"
+    )
+    assert "subagents:" in content
+    for role in KIMI_SUBAGENT_ROLES:
+        assert f"{role}:" in content, f"Main agent missing subagent entry for {role}"
+        # Each subagent entry must point at a separate YAML file under .kimi/agents/.
+        assert f"./agents/{role}.yaml" in content, (
+            f"Main agent subagent {role} must point to ./agents/{role}.yaml"
+        )
+
+
+def test_init_project_kimi_subagent_yaml_files(tmp_path: Path) -> None:
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    project_dir = tmp_path / "demo-app"
+    kimi_agents_dir = project_dir / ".kimi" / "agents"
+
+    assert kimi_agents_dir.is_dir()
+    assert not kimi_agents_dir.is_symlink()
+
+    for role in KIMI_SUBAGENT_ROLES:
+        subagent_yaml = kimi_agents_dir / f"{role}.yaml"
+        assert subagent_yaml.is_file(), f"Missing .kimi/agents/{role}.yaml"
+        content = subagent_yaml.read_text(encoding="utf-8")
+
+        assert "version: 1" in content
+        assert f"name: {role}" in content
+        # Each subagent extends the main agent so tool policy stays uniform.
+        assert "extend: ../agent.yaml" in content, (
+            f"{role}.yaml must extend the main agent at ../agent.yaml"
+        )
+        # The canonical prompt body lives in .theking/agents/<role>.md; Kimi's
+        # system_prompt_path is resolved relative to the agent YAML file, so
+        # we point back to the canonical md.
+        assert (
+            f"system_prompt_path: ../../.theking/agents/{role}.md" in content
+        ), f"{role}.yaml must point system_prompt_path at the canonical md"
+
+
+def test_init_project_kimi_subagent_prompt_path_resolves(tmp_path: Path) -> None:
+    """The system_prompt_path stored in .kimi/agents/<role>.yaml must point at
+    an existing canonical md file so Kimi can actually load it."""
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    project_dir = tmp_path / "demo-app"
+    kimi_agents_dir = project_dir / ".kimi" / "agents"
+
+    for role in KIMI_SUBAGENT_ROLES:
+        subagent_yaml = kimi_agents_dir / f"{role}.yaml"
+        assert subagent_yaml.is_file(), f"Missing .kimi/agents/{role}.yaml"
+        resolved_prompt = (subagent_yaml.parent / f"../../.theking/agents/{role}.md").resolve()
+        assert resolved_prompt.is_file(), (
+            f"system_prompt_path for {role}.yaml resolves to missing file: {resolved_prompt}"
+        )
+        canonical_md = (project_dir / ".theking" / "agents" / f"{role}.md").resolve()
+        assert resolved_prompt == canonical_md
+
+
+def test_init_project_kimi_preserves_existing_agent_yaml(tmp_path: Path) -> None:
+    """User customizations to .kimi/agent.yaml or .kimi/agents/*.yaml must
+    survive re-running init-project (idempotent, non-destructive)."""
+    project_dir = tmp_path / "demo-app"
+    kimi_dir = project_dir / ".kimi"
+    kimi_agents_dir = kimi_dir / "agents"
+    kimi_agents_dir.mkdir(parents=True)
+
+    custom_main = "# custom main agent\nversion: 1\nagent:\n  name: my-own\n"
+    custom_planner = "# custom planner\nversion: 1\nagent:\n  name: my-planner\n"
+    (kimi_dir / "agent.yaml").write_text(custom_main, encoding="utf-8")
+    (kimi_agents_dir / "planner.yaml").write_text(custom_planner, encoding="utf-8")
+
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (kimi_dir / "agent.yaml").read_text(encoding="utf-8") == custom_main
+    assert (kimi_agents_dir / "planner.yaml").read_text(encoding="utf-8") == custom_planner
+    # Other subagents are still generated.
+    for role in KIMI_SUBAGENT_ROLES:
+        if role == "planner":
+            continue
+        assert (kimi_agents_dir / f"{role}.yaml").is_file(), (
+            f"Non-custom subagent {role}.yaml should have been created"
+        )
+
+
+def test_ensure_generates_kimi_runtime_on_fresh_project(tmp_path: Path) -> None:
+    result = run_cli(
+        ["ensure", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    project_dir = tmp_path / "demo-app"
+    assert (project_dir / ".kimi" / "agent.yaml").is_file()
+    assert (project_dir / ".kimi" / "AGENTS.md").is_symlink()
+    assert_runtime_symlink(project_dir / ".kimi" / "skills", project_dir / ".theking" / "skills")
+    for role in KIMI_SUBAGENT_ROLES:
+        assert (project_dir / ".kimi" / "agents" / f"{role}.yaml").is_file()
+
+
+def test_kimi_generated_yaml_is_parseable(tmp_path: Path) -> None:
+    """Guard against string-concatenation bugs that produce invalid YAML. A
+    real ``yaml.safe_load`` round-trip is the cheapest way to catch indentation
+    and escaping mistakes before they break `kimi --agent-file`."""
+    yaml = pytest.importorskip("yaml")
+
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    project_dir = tmp_path / "demo-app"
+    kimi_dir = project_dir / ".kimi"
+
+    main_agent_text = (kimi_dir / "agent.yaml").read_text(encoding="utf-8")
+    main_agent_doc = yaml.safe_load(main_agent_text)
+    assert isinstance(main_agent_doc, dict)
+    assert main_agent_doc.get("version") == 1
+    agent_cfg = main_agent_doc.get("agent")
+    assert isinstance(agent_cfg, dict)
+    assert agent_cfg.get("extend") == "default"
+    subagents = agent_cfg.get("subagents")
+    assert isinstance(subagents, dict)
+    for role in KIMI_SUBAGENT_ROLES:
+        entry = subagents.get(role)
+        assert isinstance(entry, dict), f"Main agent subagent `{role}` not a mapping"
+        assert entry.get("path") == f"./agents/{role}.yaml"
+        assert isinstance(entry.get("description"), str)
+
+    for role in KIMI_SUBAGENT_ROLES:
+        subagent_text = (kimi_dir / "agents" / f"{role}.yaml").read_text(encoding="utf-8")
+        subagent_doc = yaml.safe_load(subagent_text)
+        assert isinstance(subagent_doc, dict)
+        assert subagent_doc.get("version") == 1
+        sub_cfg = subagent_doc.get("agent")
+        assert isinstance(sub_cfg, dict)
+        assert sub_cfg.get("extend") == "../agent.yaml"
+        assert sub_cfg.get("name") == role
+        assert sub_cfg.get("system_prompt_path") == f"../../.theking/agents/{role}.md"
+
+
+def test_kimi_tool_mapping_drops_unknown_and_dedupes() -> None:
+    """The tool mapper must silently drop unknown Claude tools and deduplicate
+    when multiple Claude aliases map to the same Kimi tool. If it didn't,
+    subagent YAML would either contain `None` entries or duplicate tool
+    registrations — both reject by Kimi."""
+    import importlib
+
+    scaffold = importlib.import_module("theking.scaffold")
+
+    result = scaffold.map_claude_tools_to_kimi(
+        ["Read", "ReadFile", "TotallyMadeUpTool", "Grep", "Read"]
+    )
+    assert result == [
+        "kimi_cli.tools.file:ReadFile",
+        "kimi_cli.tools.file:Grep",
+    ], "Unknown tool must be dropped; duplicates must collapse"
+
+
+def test_kimi_subagent_yaml_escapes_quotes_in_description() -> None:
+    """A canonical agent whose description contains double quotes must emit
+    valid double-quoted YAML (Kimi would reject unescaped inner quotes)."""
+    import importlib
+
+    scaffold = importlib.import_module("theking.scaffold")
+    yaml = pytest.importorskip("yaml")
+
+    md = (
+        '---\n'
+        'name: test-role\n'
+        'description: "He said \\"hello\\" to the crowd."\n'
+        'tools: Read, Grep\n'
+        '---\n'
+        'Body content\n'
+    )
+    generated = scaffold.build_kimi_subagent_yaml(
+        role="test-role", canonical_md_text=md
+    )
+    parsed = yaml.safe_load(generated)
+    assert isinstance(parsed, dict)
+    assert isinstance(parsed["agent"]["description"], str)
+
+
+def test_kimi_subagent_roles_match_canonical_agent_definitions() -> None:
+    """Guard against drift: every canonical agent role must also be exposed as
+    a Kimi subagent. Otherwise adding a new role would silently leave Kimi
+    users without access to it."""
+    # Import from the installed theking package (so this test reflects what
+    # `workflowctl` actually ships).
+    import importlib
+
+    constants = importlib.import_module("theking.constants")
+    canonical_roles = {name.removesuffix(".md") for name, _tmpl in constants.AGENT_DEFINITIONS}
+    kimi_roles = set(constants.KIMI_SUBAGENT_ROLES)
+    assert canonical_roles == kimi_roles, (
+        "KIMI_SUBAGENT_ROLES drifted from AGENT_DEFINITIONS. "
+        f"Only in canonical: {canonical_roles - kimi_roles}. "
+        f"Only in kimi: {kimi_roles - canonical_roles}."
+    )

@@ -115,3 +115,63 @@ COMMAND_DEFINITIONS: tuple[tuple[str, str], ...] = (
     ("decree.md", "cmd_decree.md.tmpl"),
     ("analyze-project.md", "cmd_analyze_project.md.tmpl"),
 )
+
+
+# --- Kimi CLI projection configuration ------------------------------------
+# Kimi Code CLI (moonshotai) consumes:
+#   * .kimi/skills/ — project-level skills (same SKILL.md format as Claude),
+#     discovered automatically.
+#   * .kimi/AGENTS.md — auto-merged into ${KIMI_AGENTS_MD} alongside the
+#     project-root AGENTS.md.
+#   * .kimi/agent.yaml + .kimi/agents/*.yaml — native YAML agent definitions;
+#     load with `kimi --agent-file .kimi/agent.yaml`.
+#
+# We do NOT project hooks (Kimi has no equivalent lifecycle hooks) or commands
+# (Kimi has no project-level slash command directory; the `workflow-governance`
+# skill carries the equivalent guidance).
+
+KIMI_DIRNAME = ".kimi"
+KIMI_MAIN_AGENT_FILENAME = "agent.yaml"
+KIMI_AGENTS_SUBDIR = "agents"
+
+# Subset of Kimi's built-in tool list we care about when mirroring Claude agents.
+# Keys are the short names used in Claude's `tools:` frontmatter; values are the
+# `module:ClassName` identifiers Kimi expects. Unknown tool names are silently
+# dropped from the generated YAML — subagents fall back to `extend:`-inherited
+# tool policy, so the resulting agent stays usable even if Claude introduces a
+# new tool we haven't mapped yet.
+CLAUDE_TO_KIMI_TOOL_MAP: dict[str, str] = {
+    "Read": "kimi_cli.tools.file:ReadFile",
+    "ReadFile": "kimi_cli.tools.file:ReadFile",
+    "Write": "kimi_cli.tools.file:WriteFile",
+    "WriteFile": "kimi_cli.tools.file:WriteFile",
+    "Edit": "kimi_cli.tools.file:StrReplaceFile",
+    "StrReplace": "kimi_cli.tools.file:StrReplaceFile",
+    "StrReplaceFile": "kimi_cli.tools.file:StrReplaceFile",
+    "MultiEdit": "kimi_cli.tools.file:StrReplaceFile",
+    "Glob": "kimi_cli.tools.file:Glob",
+    "Grep": "kimi_cli.tools.file:Grep",
+    "Bash": "kimi_cli.tools.shell:Shell",
+    "Shell": "kimi_cli.tools.shell:Shell",
+    "WebFetch": "kimi_cli.tools.web:FetchURL",
+    "FetchURL": "kimi_cli.tools.web:FetchURL",
+    "WebSearch": "kimi_cli.tools.web:SearchWeb",
+    "SearchWeb": "kimi_cli.tools.web:SearchWeb",
+}
+
+# Roles that map 1:1 from .theking/agents/*.md to .kimi/agents/<role>.yaml.
+# Order follows theking's canonical agent catalog (planner first, workhorse
+# reviewers next, supporting specialists last) so the generated main agent
+# lists subagents in a predictable sequence.
+KIMI_SUBAGENT_ROLES: tuple[str, ...] = (
+    "planner",
+    "tdd-guide",
+    "code-reviewer",
+    "security-reviewer",
+    "e2e-runner",
+    "architect",
+    "build-error-resolver",
+    "doc-updater",
+    "refactor-cleaner",
+    "perf-optimizer",
+)

@@ -21,9 +21,14 @@ from typing import Any
 try:
     from .constants import (
         AGENT_DEFINITIONS,
+        CLAUDE_TO_KIMI_TOOL_MAP,
         COMMAND_DEFINITIONS,
         EXECUTION_PROFILE_DIRS,
         HOOK_FILES,
+        KIMI_AGENTS_SUBDIR,
+        KIMI_DIRNAME,
+        KIMI_MAIN_AGENT_FILENAME,
+        KIMI_SUBAGENT_ROLES,
         RUNTIME_ENTRY_FILES,
         SKILL_DEFINITIONS,
         THEKING_DIRNAME,
@@ -43,9 +48,14 @@ try:
 except ImportError:
     from constants import (
         AGENT_DEFINITIONS,
+        CLAUDE_TO_KIMI_TOOL_MAP,
         COMMAND_DEFINITIONS,
         EXECUTION_PROFILE_DIRS,
         HOOK_FILES,
+        KIMI_AGENTS_SUBDIR,
+        KIMI_DIRNAME,
+        KIMI_MAIN_AGENT_FILENAME,
+        KIMI_SUBAGENT_ROLES,
         RUNTIME_ENTRY_FILES,
         SKILL_DEFINITIONS,
         THEKING_DIRNAME,
@@ -139,6 +149,235 @@ def rewrite_agent_frontmatter_for_codebuddy(relative_path: str, text: str) -> st
     kept_lines.extend(CODEBUDDY_FRONTMATTER_APPEND)
     new_header = "\n".join(kept_lines)
     return f"---\n{new_header}\n---\n{body}"
+
+
+# --- Kimi CLI agent generation ------------------------------------------
+#
+# Kimi uses YAML agent files (``kimi --agent-file``), not Claude's md-with-
+# frontmatter format. Rather than maintain a parallel set of YAML templates
+# per role, we derive each ``.kimi/agents/<role>.yaml`` from the canonical
+# ``.theking/agents/<role>.md`` at projection time — so there is exactly one
+# source of truth for each role's system prompt.
+#
+# The main agent ``.kimi/agent.yaml`` simply ``extend:``-s Kimi's built-in
+# ``default`` agent (inheriting its tool policy) and lists every subagent. Each
+# subagent extends the main agent and points ``system_prompt_path`` back at the
+# canonical md file.
+
+_FRONTMATTER_TOOLS_PATTERN = re.compile(r"^tools\s*:\s*(.*)$")
+_FRONTMATTER_DESCRIPTION_PATTERN = re.compile(r"^description\s*:\s*(.*)$")
+
+
+def extract_claude_tools_from_md(md_text: str) -> list[str]:
+    """Extract Claude-style comma-separated tool list from an agent md file.
+
+    Returns an empty list if no ``tools:`` field is present or the frontmatter
+    is malformed. Only handles the simple inline-list form (``tools: Read, Grep``)
+    that theking's canonical templates use; block-scalar forms are ignored.
+    """
+    if not md_text.startswith("---\n"):
+        return []
+    end_marker = md_text.find("\n---\n", 4)
+    if end_marker == -1:
+        return []
+    header = md_text[4:end_marker]
+    for line in header.splitlines():
+        match = _FRONTMATTER_TOOLS_PATTERN.match(line)
+        if not match:
+            continue
+        raw_value = match.group(1).strip()
+        if not raw_value or raw_value.startswith(("|", ">", "[")):
+            # Skip block scalars and flow sequences — canonical templates do
+            # not use them, and trying to parse them without a real YAML
+            # parser risks silently mapping the wrong tools.
+            return []
+        return [token.strip() for token in raw_value.split(",") if token.strip()]
+    return []
+
+
+def extract_claude_description_from_md(md_text: str) -> str:
+    """Extract the ``description`` field from an agent md frontmatter.
+
+    Handles inline strings (optionally surrounded by matching single or double
+    quotes). Returns an empty string when the field is absent, when it uses a
+    block scalar (``|``, ``>``), or when the frontmatter is malformed — we
+    prefer dropping the description to emitting a YAML that might corrupt
+    Kimi's parser downstream.
+    """
+    if not md_text.startswith("---\n"):
+        return ""
+    end_marker = md_text.find("\n---\n", 4)
+    if end_marker == -1:
+        return ""
+    header = md_text[4:end_marker]
+    for line in header.splitlines():
+        match = _FRONTMATTER_DESCRIPTION_PATTERN.match(line)
+        if not match:
+            continue
+        raw_value = match.group(1).strip()
+        if raw_value.startswith(("|", ">")):
+            return ""
+        if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in ('"', "'"):
+            raw_value = raw_value[1:-1]
+        return raw_value
+    return ""
+
+
+def _escape_yaml_double_quoted(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def map_claude_tools_to_kimi(claude_tools: list[str]) -> list[str]:
+    """Translate Claude tool names to Kimi ``module:ClassName`` identifiers.
+
+    Unknown tool names are dropped silently so that a subagent keeps working
+    even if Claude introduces a new tool we have not mapped yet — the subagent
+    falls back to the tool policy inherited via ``extend:``.
+    """
+    mapped: list[str] = []
+    seen: set[str] = set()
+    for token in claude_tools:
+        kimi_tool = CLAUDE_TO_KIMI_TOOL_MAP.get(token)
+        if kimi_tool is None or kimi_tool in seen:
+            continue
+        seen.add(kimi_tool)
+        mapped.append(kimi_tool)
+    return mapped
+
+
+def build_kimi_subagent_yaml(*, role: str, canonical_md_text: str) -> str:
+    """Render a single Kimi subagent YAML for a canonical ``.theking/agents``
+    md file.
+
+    ``system_prompt_path`` is expressed relative to the subagent YAML's own
+    location (``.kimi/agents/<role>.yaml``), so it resolves to
+    ``<project>/.theking/agents/<role>.md`` without hard-coded absolute paths.
+    """
+    description = extract_claude_description_from_md(canonical_md_text)
+    claude_tools = extract_claude_tools_from_md(canonical_md_text)
+    kimi_tools = map_claude_tools_to_kimi(claude_tools)
+
+    lines: list[str] = [
+        f"# Kimi subagent for role `{role}` — generated from .theking/agents/{role}.md",
+        "#",
+        "# Edit the canonical md instead of this file; `workflowctl ensure` only",
+        "# creates this file when it does not already exist.",
+        "",
+        "version: 1",
+        "agent:",
+        "  extend: ../agent.yaml",
+        f"  name: {role}",
+        f"  system_prompt_path: ../../.theking/agents/{role}.md",
+    ]
+    if description:
+        lines.append(f'  description: "{_escape_yaml_double_quoted(description)}"')
+    if kimi_tools:
+        lines.append("  tools:")
+        lines.extend(f"    - {tool}" for tool in kimi_tools)
+    return "\n".join(lines) + "\n"
+
+
+def build_kimi_main_agent_yaml(*, project_slug: str, roles: tuple[str, ...]) -> str:
+    """Render the Kimi main agent YAML that ties subagents together.
+
+    The returned text is filled through the ``main_agent.yaml.tmpl`` template
+    so doc/comment edits can stay in the template without code changes.
+    """
+    main_agent_name = f"{project_slug}-main"
+    subagents_block_lines: list[str] = []
+    for role in roles:
+        subagents_block_lines.append(f"    {role}:")
+        subagents_block_lines.append(f"      path: ./agents/{role}.yaml")
+        subagents_block_lines.append(
+            f'      description: "theking {role} subagent for {project_slug}"'
+        )
+    subagents_block = "\n".join(subagents_block_lines)
+    return render_template(
+        "main_agent.yaml.tmpl",
+        project_slug=project_slug,
+        main_agent_name=main_agent_name,
+        subagents_block=subagents_block,
+    )
+
+
+def ensure_kimi_runtime(project_dir: Path, project_slug: str, agents_dir: Path) -> None:
+    """Materialize the Kimi CLI runtime surface under ``.kimi/``.
+
+    This is additive: an existing ``.kimi/agent.yaml`` or ``.kimi/agents/*.yaml``
+    is left alone so user customizations survive re-runs. Skills and AGENTS.md
+    are exposed as symlinks so they always track the canonical sources.
+    """
+    kimi_dir = project_dir / KIMI_DIRNAME
+    ensure_local_path(kimi_dir, project_dir, KIMI_DIRNAME)
+    kimi_dir.mkdir(parents=True, exist_ok=True)
+
+    kimi_agents_dir = kimi_dir / KIMI_AGENTS_SUBDIR
+    ensure_local_path(kimi_agents_dir, project_dir, f"{KIMI_DIRNAME}/{KIMI_AGENTS_SUBDIR}")
+    if kimi_agents_dir.is_symlink():
+        raise WorkflowError(
+            f"{kimi_agents_dir.relative_to(project_dir).as_posix()} must not be a symlink"
+        )
+    kimi_agents_dir.mkdir(parents=True, exist_ok=True)
+
+    main_agent_path = kimi_dir / KIMI_MAIN_AGENT_FILENAME
+    ensure_local_path(
+        main_agent_path, project_dir, f"{KIMI_DIRNAME}/{KIMI_MAIN_AGENT_FILENAME}"
+    )
+    write_if_missing(
+        main_agent_path,
+        build_kimi_main_agent_yaml(project_slug=project_slug, roles=KIMI_SUBAGENT_ROLES),
+    )
+
+    for role in KIMI_SUBAGENT_ROLES:
+        canonical_md = agents_dir / f"{role}.md"
+        if not canonical_md.is_file():
+            # Canonical agent wasn't generated (should never happen in normal
+            # flow, but be defensive instead of producing a YAML that points
+            # at a missing prompt file).
+            continue
+        subagent_path = kimi_agents_dir / f"{role}.yaml"
+        ensure_local_path(
+            subagent_path,
+            project_dir,
+            f"{KIMI_DIRNAME}/{KIMI_AGENTS_SUBDIR}/{role}.yaml",
+        )
+        write_if_missing(
+            subagent_path,
+            build_kimi_subagent_yaml(
+                role=role,
+                canonical_md_text=canonical_md.read_text(encoding="utf-8"),
+            ),
+        )
+
+    # .kimi/AGENTS.md → symlink to project-root AGENTS.md so both locations
+    # Kimi merges resolve to the same file. We can't use ``ensure_local_path``
+    # here because it rejects the symlink we are intentionally installing;
+    # instead we validate the *target* stays inside the project via
+    # ``ensure_within_directory``.
+    root_agents_md = project_dir / "AGENTS.md"
+    kimi_agents_md = kimi_dir / "AGENTS.md"
+
+    if kimi_agents_md.is_symlink():
+        existing_target = kimi_agents_md.resolve(strict=False)
+        ensure_within_directory(
+            existing_target, project_dir.resolve(), f"{KIMI_DIRNAME}/AGENTS.md"
+        )
+    elif kimi_agents_md.exists():
+        if not kimi_agents_md.is_file():
+            raise WorkflowError(
+                f"{KIMI_DIRNAME}/AGENTS.md must be a file or symlink, got {kimi_agents_md}"
+            )
+    elif root_agents_md.is_file():
+        try:
+            relative_target = os.path.relpath(root_agents_md, kimi_agents_md.parent)
+            kimi_agents_md.symlink_to(relative_target)
+        except OSError:
+            # Filesystems without symlink support fall back to a materialized
+            # copy. Kimi will still consume it; only the "both paths resolve
+            # to the same inode" invariant is relaxed.
+            kimi_agents_md.write_text(
+                root_agents_md.read_text(encoding="utf-8"), encoding="utf-8"
+            )
 
 
 def build_runtime_template_vars(project_slug: str) -> dict[str, str]:
@@ -568,6 +807,14 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
             prefer_symlink=False,
             manifest_path=manifest_dir / "github-prompts.json",
         ),
+        # Kimi CLI reads project-level skills from `.kimi/skills/` (same
+        # SKILL.md format as Claude / CodeBuddy). Keep it as a symlink so
+        # skill edits flow through `.theking/skills/` only.
+        RuntimeProjection(
+            exposure_dir=project_dir / KIMI_DIRNAME / "skills",
+            source_dir=skills_dir,
+            legacy_source_dir=legacy_runtime_skills_dir,
+        ),
     ]
     for projection in runtime_projections:
         materialize_runtime_projection(
@@ -608,6 +855,12 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
             "prompts": prompts_dir,
         },
     )
+
+    # Kimi CLI runtime (agent.yaml + subagents + AGENTS.md). Must run *after*
+    # the canonical agents are written and the root AGENTS.md entry file has
+    # been created, so subagent YAMLs point at real md files and the
+    # `.kimi/AGENTS.md` symlink has a valid target.
+    ensure_kimi_runtime(project_dir, project_slug, agents_dir)
 
     sync_runtime_manifest_baseline(project_dir, project_slug)
 
