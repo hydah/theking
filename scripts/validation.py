@@ -570,7 +570,11 @@ def normalize_task_type(task_type: str) -> str:
         raise WorkflowError("task_type must not be empty")
     unknown_tokens = [token for token in tokens if token not in ALLOWED_TASK_TYPE_TOKENS]
     if unknown_tokens:
-        raise WorkflowError(f"Unknown task_type token(s): {', '.join(unknown_tokens)}")
+        allowed = ", ".join(sorted(ALLOWED_TASK_TYPE_TOKENS))
+        raise WorkflowError(
+            f"Unknown task_type token(s): {', '.join(unknown_tokens)}. "
+            f"Allowed tokens: {allowed}."
+        )
     return ",".join(tokens)
 
 
@@ -581,7 +585,10 @@ def normalize_execution_profile(value: str) -> str:
     canonical = EXECUTION_PROFILE_ALIASES.get(profile)
     if canonical:
         return canonical
-    raise WorkflowError(f"Unknown execution_profile: {value}")
+    raise WorkflowError(
+        f"Unknown execution_profile: {value}. "
+        f"Allowed values: {', '.join(sorted(ALLOWED_EXECUTION_PROFILES))}."
+    )
 
 
 def normalize_task_id(task_id: str) -> str:

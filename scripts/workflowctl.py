@@ -10,6 +10,8 @@ from typing import Any
 
 try:
     from .constants import (
+        ALLOWED_EXECUTION_PROFILES,
+        ALLOWED_TASK_TYPE_TOKENS,
         TERMINAL_STATUSES,
         THEKING_DIRNAME,
         WorkflowError,
@@ -71,6 +73,8 @@ try:
     )
 except ImportError:
     from constants import (
+        ALLOWED_EXECUTION_PROFILES,
+        ALLOWED_TASK_TYPE_TOKENS,
         TERMINAL_STATUSES,
         THEKING_DIRNAME,
         WorkflowError,
@@ -144,6 +148,22 @@ PROJECT_SLUG_ARGUMENT_HELP = "Project slug in kebab-case. Usually the project di
 CHECKPOINT_FLOW_CHOICES = ("full", "lightweight")
 
 
+def _task_type_help() -> str:
+    tokens = ", ".join(sorted(ALLOWED_TASK_TYPE_TOKENS))
+    return (
+        "Task type token. Use a single token or comma-separated combination "
+        f"(e.g. 'auth,api'). Allowed tokens: {tokens}."
+    )
+
+
+def _execution_profile_help() -> str:
+    profiles = ", ".join(sorted(ALLOWED_EXECUTION_PROFILES))
+    return (
+        "Optional execution profile. If omitted, inferred from --task-type. "
+        f"Allowed values: {profiles}."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -215,8 +235,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_task.add_argument("--sprint", required=True)
     init_task.add_argument("--slug", required=True)
     init_task.add_argument("--title", required=True)
-    init_task.add_argument("--task-type", required=True)
-    init_task.add_argument("--execution-profile")
+    init_task.add_argument(
+        "--task-type",
+        required=True,
+        help=_task_type_help(),
+    )
+    init_task.add_argument(
+        "--execution-profile",
+        help=_execution_profile_help(),
+    )
     init_task.set_defaults(handler=handle_init_task)
 
     check = add_command_parser(
