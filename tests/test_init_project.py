@@ -407,8 +407,12 @@ def test_init_project_creates_agent_definitions_in_theking_and_claude(tmp_path: 
     claude_agents = project_dir / ".claude" / "agents"
     codebuddy_agents = project_dir / ".codebuddy" / "agents"
 
+    # .claude mirrors canonical theking agents via symlink.
     assert_runtime_symlink(claude_agents, theking_agents)
-    assert_runtime_symlink(codebuddy_agents, theking_agents)
+    # .codebuddy is a materialized copy with CodeBuddy-flavored frontmatter —
+    # not a symlink (the frontmatter differs from canonical).
+    assert not codebuddy_agents.is_symlink()
+    assert codebuddy_agents.is_dir()
 
     for filename in AGENT_FILENAMES:
         theking_file = theking_agents / filename
@@ -422,11 +426,30 @@ def test_init_project_creates_agent_definitions_in_theking_and_claude(tmp_path: 
         claude_content = claude_file.read_text(encoding="utf-8")
         codebuddy_content = codebuddy_file.read_text(encoding="utf-8")
         assert theking_content == claude_content, f"Content mismatch .claude for {filename}"
-        assert theking_content == codebuddy_content, f"Content mismatch .codebuddy for {filename}"
         assert theking_content.startswith("---\n"), f"{filename} missing YAML frontmatter"
         assert "name:" in theking_content, f"{filename} missing name field"
         assert "tools:" in theking_content, f"{filename} missing tools field"
         assert "demo-app" in theking_content, f"{filename} missing project slug"
+
+        # CodeBuddy flavor: body identical, frontmatter rewritten.
+        assert codebuddy_content.startswith("---\n")
+        assert "agentMode: agentic" in codebuddy_content
+        assert "enabled: true" in codebuddy_content
+        assert "enabledAutoRun: true" in codebuddy_content
+        assert "tools: list_dir" in codebuddy_content
+        # Canonical Claude-specific keys must be absent.
+        for banned in (
+            "tools: Read",
+            "tools: Read, Grep",
+            "tools: Read, Write",
+            "model: opus",
+            "model: sonnet",
+        ):
+            assert banned not in codebuddy_content, f"{filename} leaked {banned!r} into CodeBuddy projection"
+        # Body (everything after the second `---`) must match.
+        _, _, theking_body = theking_content.partition("\n---\n")
+        _, _, codebuddy_body = codebuddy_content.partition("\n---\n")
+        assert theking_body == codebuddy_body, f"Body mismatch for {filename}"
 
 
 def test_init_project_preserves_existing_agent_definitions(tmp_path: Path) -> None:
@@ -1108,7 +1131,10 @@ def test_init_project_creates_runtime_projection_tree(tmp_path: Path) -> None:
     assert_runtime_symlink(project_dir / ".claude" / "agents", runtime_dir / "agents")
     assert_runtime_symlink(project_dir / ".claude" / "commands", runtime_dir / "commands")
     assert_runtime_symlink(project_dir / ".claude" / "skills", runtime_dir / "skills")
-    assert_runtime_symlink(project_dir / ".codebuddy" / "agents", runtime_dir / "agents")
+    # .codebuddy/agents is a materialized copy (CodeBuddy-flavored frontmatter).
+    codebuddy_agents = project_dir / ".codebuddy" / "agents"
+    assert not codebuddy_agents.is_symlink()
+    assert codebuddy_agents.is_dir()
     assert_runtime_symlink(project_dir / ".codebuddy" / "commands", runtime_dir / "commands")
     assert_runtime_symlink(project_dir / ".codebuddy" / "skills", runtime_dir / "skills")
 

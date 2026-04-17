@@ -116,6 +116,16 @@ workflowctl upgrade --project-dir . --project-slug demo-app --adopt
 
 `.claude/`、`.codebuddy/`、`.github/` 下的投影目录不受 manifest 管辖——它们本来就在每次 `ensure`（也就是 `upgrade` 第一步）里从 canonical source 全量重建。
 
+## 多 runtime 投影（.claude vs .codebuddy）
+
+Canonical 源 `.theking/agents/*.md` 采用 Claude Code 风格 frontmatter（`tools: Read, Grep, Glob`、`model: opus` 等）。投影规则：
+
+- `.claude/agents/` → **symlink** 到 `.theking/agents/`，内容 1:1 一致。
+- `.codebuddy/agents/` → **物化拷贝** 并重写 frontmatter 为 CodeBuddy 方言：移除 `tools`/`model`，改写为 CodeBuddy 默认工具集，并追加 `agentMode: agentic`、`enabled: true`、`enabledAutoRun: true`。正文 body 保持不变。
+- `.claude|.codebuddy/commands/`、`.claude|.codebuddy/skills/`、`.github/skills/`、`.github/prompts/` → 继续 symlink，因为这些文件的 frontmatter 在两个 runtime 中兼容。
+
+重写逻辑是幂等的：多次 `ensure`/`upgrade` 不会叠加字段。要调整 CodeBuddy 的工具集，改 `scripts/workflowctl.py` 里的 `CODEBUDDY_AGENT_TOOLS` 常量即可。`mcpTools` 和具体 `model` 值属于用户环境配置，不在投影层注入，请在 CodeBuddy 自己的 settings 中配置。
+
 ## 工作流底线
 
 - 先做上下文初勘，再决定完整流程还是轻量流程。至少查看相关代码、测试、文档、报错或接口契约中的直接证据。

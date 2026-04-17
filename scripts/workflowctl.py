@@ -10,7 +10,7 @@ import shlex
 import shutil
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 try:
     from .constants import (
@@ -1397,6 +1397,66 @@ def update_sprint_overview(
 RUNTIME_MANIFEST_RELATIVE = PurePosixPath(THEKING_DIRNAME) / ".manifests" / "runtime.json"
 RUNTIME_BACKUP_ROOT_RELATIVE = PurePosixPath(THEKING_DIRNAME) / ".backups"
 
+# CodeBuddy agent frontmatter defaults. Tool list mirrors the CodeBuddy extension's
+# standard set; we intentionally drop `model` (environment-specific) and `mcpTools`
+# (user must choose which MCP servers to trust in their workspace).
+CODEBUDDY_AGENT_TOOLS = (
+    "list_dir, search_file, search_content, read_file, read_lints, replace_in_file, "
+    "write_to_file, execute_command, mcp_get_tool_description, mcp_call_tool, "
+    "delete_file, preview_url, web_fetch, use_skill, web_search, codebase_search, "
+    "automation_update"
+)
+CODEBUDDY_FRONTMATTER_DROP_KEYS = frozenset(
+    {"model", "tools", "agentMode", "enabled", "enabledAutoRun", "mcpTools"}
+)
+CODEBUDDY_FRONTMATTER_APPEND = (
+    f"tools: {CODEBUDDY_AGENT_TOOLS}",
+    "agentMode: agentic",
+    "enabled: true",
+    "enabledAutoRun: true",
+)
+
+
+def rewrite_agent_frontmatter_for_codebuddy(relative_path: str, text: str) -> str:
+    """Rewrite a Claude-flavored agent file into CodeBuddy-flavored frontmatter.
+
+    Only runs on files directly under the projection target (no nested dirs)
+    ending in .md with a leading YAML frontmatter block. Preserves `name` and
+    `description` (including multi-line block scalars). Drops Claude-specific
+    `tools`/`model` and appends CodeBuddy-specific keys. Body is untouched.
+    """
+    if "/" in relative_path or not relative_path.endswith(".md"):
+        return text
+    if not text.startswith("---\n"):
+        return text
+    end_marker = text.find("\n---\n", 4)
+    if end_marker == -1:
+        return text
+    header = text[4:end_marker]
+    body = text[end_marker + 5 :]
+
+    kept_lines: list[str] = []
+    skipping_block = False
+    for line in header.splitlines():
+        if skipping_block:
+            # Indented continuation of a block scalar / flow sequence.
+            if line.startswith((" ", "\t")) or line == "":
+                continue
+            skipping_block = False
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:", line)
+        if match and match.group(1) in CODEBUDDY_FRONTMATTER_DROP_KEYS:
+            # Detect block scalar (| or >) or empty value that implies nested block.
+            value_match = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*:\s*(.*)$", line)
+            value = value_match.group(1) if value_match else ""
+            if value.startswith("|") or value.startswith(">") or value == "":
+                skipping_block = True
+            continue
+        kept_lines.append(line)
+
+    kept_lines.extend(CODEBUDDY_FRONTMATTER_APPEND)
+    new_header = "\n".join(kept_lines)
+    return f"---\n{new_header}\n---\n{body}"
+
 
 def build_runtime_template_vars(project_slug: str) -> dict[str, str]:
     theking_cmd = "workflowctl"
@@ -1809,12 +1869,20 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
         )
 
     runtime_projection_dirs = [
-        (project_dir / ".claude" / "agents", agents_dir, legacy_runtime_agents_dir, True, True, None),
-        (project_dir / ".claude" / "commands", commands_dir, legacy_runtime_commands_dir, True, True, None),
-        (project_dir / ".claude" / "skills", skills_dir, legacy_runtime_skills_dir, True, True, None),
-        (project_dir / ".codebuddy" / "agents", agents_dir, legacy_runtime_agents_dir, True, True, None),
-        (project_dir / ".codebuddy" / "commands", commands_dir, legacy_runtime_commands_dir, True, True, None),
-        (project_dir / ".codebuddy" / "skills", skills_dir, legacy_runtime_skills_dir, True, True, None),
+        (project_dir / ".claude" / "agents", agents_dir, legacy_runtime_agents_dir, True, True, None, None),
+        (project_dir / ".claude" / "commands", commands_dir, legacy_runtime_commands_dir, True, True, None, None),
+        (project_dir / ".claude" / "skills", skills_dir, legacy_runtime_skills_dir, True, True, None, None),
+        (
+            project_dir / ".codebuddy" / "agents",
+            agents_dir,
+            legacy_runtime_agents_dir,
+            False,  # transform forces materialized copy
+            True,
+            None,
+            rewrite_agent_frontmatter_for_codebuddy,
+        ),
+        (project_dir / ".codebuddy" / "commands", commands_dir, legacy_runtime_commands_dir, True, True, None, None),
+        (project_dir / ".codebuddy" / "skills", skills_dir, legacy_runtime_skills_dir, True, True, None, None),
         (
             project_dir / ".github" / "skills",
             skills_dir,
@@ -1822,6 +1890,7 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
             False,
             True,
             manifest_dir / "github-skills.json",
+            None,
         ),
         (
             project_dir / ".github" / "prompts",
@@ -1830,9 +1899,18 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
             False,
             True,
             manifest_dir / "github-prompts.json",
+            None,
         ),
     ]
-    for exposure_dir, source_dir, legacy_source_dir, prefer_symlink, overwrite_existing, manifest_path in runtime_projection_dirs:
+    for (
+        exposure_dir,
+        source_dir,
+        legacy_source_dir,
+        prefer_symlink,
+        overwrite_existing,
+        manifest_path,
+        content_transform,
+    ) in runtime_projection_dirs:
         materialize_runtime_projection(
             source_dir=source_dir,
             exposure_dir=exposure_dir,
@@ -1841,6 +1919,7 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
             prefer_symlink=prefer_symlink,
             overwrite_existing=overwrite_existing,
             manifest_path=manifest_path,
+            content_transform=content_transform,
         )
 
     prune_legacy_copilot_exports(
@@ -2056,6 +2135,7 @@ def materialize_runtime_projection(
     prefer_symlink: bool,
     overwrite_existing: bool,
     manifest_path: Path | None,
+    content_transform: Callable[[str, str], str] | None = None,
 ) -> None:
     label = exposure_dir.relative_to(project_dir).as_posix()
     ensure_local_path(source_dir, project_dir, f"runtime source for {label}")
@@ -2063,10 +2143,19 @@ def materialize_runtime_projection(
     if manifest_path is not None:
         ensure_local_path(manifest_path, project_dir, manifest_path.relative_to(project_dir).as_posix())
 
+    # Content transforms require materialized files, so symlinks would expose
+    # the wrong flavor to the target runtime.
+    if content_transform is not None:
+        prefer_symlink = False
+
     if exposure_dir.is_symlink():
         resolved = exposure_dir.resolve(strict=False)
         ensure_within_directory(resolved, project_dir.resolve(), label)
-        if legacy_source_dir is not None and resolved == legacy_source_dir.resolve(strict=False):
+        if content_transform is not None:
+            # A previously-installed symlink predates the transform; replace it
+            # with a real directory so we can write flavored content.
+            exposure_dir.unlink()
+        elif legacy_source_dir is not None and resolved == legacy_source_dir.resolve(strict=False):
             legacy_issue = describe_legacy_runtime_tree_drift(source_dir, legacy_source_dir)
             if legacy_issue is not None:
                 raise WorkflowError(legacy_issue)
@@ -2082,13 +2171,15 @@ def materialize_runtime_projection(
                     exposure_dir,
                     legacy_source_dir=legacy_source_dir,
                     overwrite_existing=overwrite_existing,
+                    content_transform=content_transform,
                 )
                 if manifest_path is not None:
                     update_export_manifest(source_dir, manifest_path)
                 return
-        if resolved != source_dir.resolve():
-            raise WorkflowError(f"{label} symlink must point to {source_dir}")
-        return
+        else:
+            if resolved != source_dir.resolve():
+                raise WorkflowError(f"{label} symlink must point to {source_dir}")
+            return
 
     if exposure_dir.exists():
         if not exposure_dir.is_dir():
@@ -2101,6 +2192,7 @@ def materialize_runtime_projection(
             exposure_dir,
             legacy_source_dir=legacy_source_dir,
             overwrite_existing=overwrite_existing,
+            content_transform=content_transform,
         )
         if manifest_path is not None:
             update_export_manifest(source_dir, manifest_path)
@@ -2122,6 +2214,7 @@ def materialize_runtime_projection(
         exposure_dir,
         legacy_source_dir=legacy_source_dir,
         overwrite_existing=overwrite_existing,
+        content_transform=content_transform,
     )
     if manifest_path is not None:
         update_export_manifest(source_dir, manifest_path)
@@ -2133,6 +2226,7 @@ def copy_directory_if_missing(
     *,
     legacy_source_dir: Path | None,
     overwrite_existing: bool,
+    content_transform: Callable[[str, str], str] | None = None,
 ) -> None:
     for source_path in sorted(source_dir.rglob("*"), key=lambda path: path.as_posix()):
         relative_path = source_path.relative_to(source_dir)
@@ -2147,6 +2241,8 @@ def copy_directory_if_missing(
         if target_path.exists() and target_path.is_dir():
             raise WorkflowError(f"runtime projection path must be a file: {target_path}")
         source_content = source_path.read_text(encoding="utf-8")
+        if content_transform is not None:
+            source_content = content_transform(relative_path.as_posix(), source_content)
         legacy_path = legacy_source_dir / relative_path if legacy_source_dir is not None else None
         if overwrite_existing and target_path.exists():
             if target_path.is_symlink():
