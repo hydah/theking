@@ -6,9 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
 
 
@@ -440,7 +437,7 @@ def test_deactivate_rejects_symlinked_theking_dir_passed_to_project_dir(tmp_path
 
 
 def test_deactivate_is_idempotent(tmp_path: Path) -> None:
-    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    bootstrap_sprint_with_tasks(tmp_path)
     project_dir = tmp_path / "demo-app"
 
     result = run_cli(

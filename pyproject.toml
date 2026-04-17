@@ -45,3 +45,28 @@ theking = "scripts"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+	"E501",  # line length — handled by formatter where it matters
+	"SIM108", # ternary preference clashes with readable if/else branches
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+ignore_missing_imports = true
+# scripts/* uses try/except dual-import so the same names are bound twice;
+# that is intentional to support both script and installed-package modes.
+disable_error_code = ["no-redef"]

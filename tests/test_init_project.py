@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

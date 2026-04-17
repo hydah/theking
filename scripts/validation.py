@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from importlib import resources
+import contextlib
 import json
 import re
 import sys
+from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -190,7 +191,7 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
     if status not in ALLOWED_STATUSES:
         raise WorkflowError(f"Unknown status: {status}")
 
-    for index, (current, nxt) in enumerate(zip(history, history[1:])):
+    for index, (current, nxt) in enumerate(zip(history, history[1:], strict=False)):
         if nxt == "blocked":
             if current == "done":
                 raise WorkflowError("done cannot transition to blocked")
@@ -352,9 +353,8 @@ def validate_review_requirements(review_dir: Path, task_data: dict[str, Any]) ->
     verification_profile = task_data["verification_profile"]
     requires_browser_e2e = isinstance(verification_profile, list) and "web.browser" in verification_profile
 
-    if status in {"ready_to_merge", "done"}:
-        if round_number < 1:
-            raise WorkflowError("current_review_round must be >= 1 before ready_to_merge or done")
+    if status in {"ready_to_merge", "done"} and round_number < 1:
+        raise WorkflowError("current_review_round must be >= 1 before ready_to_merge or done")
 
     required_review_rounds = 0
     if status == "in_review":
@@ -845,10 +845,8 @@ SOURCE_TEMPLATES_ROOT = Path(__file__).resolve().parents[1] / "templates"
 
 def template_roots() -> list[Any]:
     roots: list[Any] = []
-    try:
+    with contextlib.suppress(ModuleNotFoundError):
         roots.append(resources.files("theking.templates"))
-    except ModuleNotFoundError:
-        pass
     roots.append(SOURCE_TEMPLATES_ROOT)
     return roots
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 ALLOWED_STATUSES = {
     "draft",
     "planned",
@@ -76,3 +75,43 @@ EXECUTION_PROFILE_DIRS = {
 
 class WorkflowError(Exception):
     pass
+
+
+# --- Scaffold manifest (ensure_theking_scaffold source data) ---
+# Each tuple is (output filename, template name). Keeping these as data lets
+# callers add / remove scaffold artifacts without editing the scaffold function.
+
+RUNTIME_ENTRY_FILES: tuple[tuple[str, str], ...] = (
+    ("CLAUDE.md", "claude_md.tmpl"),
+    ("CODEBUDDY.md", "codebuddy_md.tmpl"),
+    ("AGENTS.md", "agents_md.tmpl"),
+)
+
+AGENT_DEFINITIONS: tuple[tuple[str, str], ...] = (
+    ("planner.md", "agent_planner.md.tmpl"),
+    ("tdd-guide.md", "agent_tdd_guide.md.tmpl"),
+    ("code-reviewer.md", "agent_code_reviewer.md.tmpl"),
+    ("security-reviewer.md", "agent_security_reviewer.md.tmpl"),
+    ("e2e-runner.md", "agent_e2e_runner.md.tmpl"),
+    ("architect.md", "agent_architect.md.tmpl"),
+    ("build-error-resolver.md", "agent_build_error_resolver.md.tmpl"),
+    ("doc-updater.md", "agent_doc_updater.md.tmpl"),
+    ("refactor-cleaner.md", "agent_refactor_cleaner.md.tmpl"),
+    ("perf-optimizer.md", "agent_perf_optimizer.md.tmpl"),
+)
+
+HOOK_FILES: tuple[tuple[str, str], ...] = (
+    ("check-spec-exists.js", "hook_check_spec.js.tmpl"),
+    ("check-task-status.js", "hook_check_status.js.tmpl"),
+    ("remind-review.js", "hook_remind_review.js.tmpl"),
+)
+
+SKILL_DEFINITIONS: tuple[tuple[str, str], ...] = (
+    ("workflow-governance", "skill_workflow_governance.md.tmpl"),
+    ("knowledge-base", "skill_knowledge_base.md.tmpl"),
+)
+
+COMMAND_DEFINITIONS: tuple[tuple[str, str], ...] = (
+    ("decree.md", "cmd_decree.md.tmpl"),
+    ("analyze-project.md", "cmd_analyze_project.md.tmpl"),
+)
