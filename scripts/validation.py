@@ -136,7 +136,10 @@ def validate_task_dir(task_dir: Path) -> None:
     if stringify(validated["id"]) != task_paths.task_dir.name:
         raise WorkflowError("task id must match the task directory name")
     validate_verification_layout(task_paths.verification_dir, validated)
-    validate_spec(task_paths.spec_md)
+    validate_spec(
+        task_paths.spec_md,
+        require_content=spec_requires_content(validated["status_history"]),
+    )
     validate_review_requirements(task_paths.review_dir, validated)
 
 
@@ -253,11 +256,61 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_spec(spec_md: Path) -> None:
+def validate_spec(spec_md: Path, *, require_content: bool) -> None:
     spec_text = spec_md.read_text(encoding="utf-8")
-    for heading in ("Acceptance", "Test Plan"):
-        if not re.search(rf"^##\s+{re.escape(heading)}\s*$", spec_text, flags=re.MULTILINE):
+    sections = collect_spec_sections(spec_text)
+    if not require_content and is_legacy_spec_structure(sections):
+        return
+
+    for heading in ("Scope", "Non-Goals", "Acceptance", "Test Plan", "Edge Cases"):
+        section_body = sections.get(heading)
+        if section_body is None:
             raise WorkflowError(f"spec.md is missing required section: {heading}")
+        if require_content and not spec_section_has_content(section_body):
+            raise WorkflowError(f"spec.md section must not be empty: {heading}")
+
+
+def collect_spec_sections(spec_text: str) -> dict[str, str]:
+    sections: dict[str, str] = {}
+    for heading in ("Scope", "Non-Goals", "Acceptance", "Test Plan", "Edge Cases"):
+        match = re.search(
+            rf"^##\s+{re.escape(heading)}\s*$\n(?P<body>.*?)(?=^##\s+|\Z)",
+            spec_text,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        if match is not None:
+            sections[heading] = match.group("body")
+    return sections
+
+
+def is_legacy_spec_structure(sections: dict[str, str]) -> bool:
+    return set(sections) == {"Acceptance", "Test Plan"}
+
+
+def spec_requires_content(status_history: list[str]) -> bool:
+    effective_status = spec_validation_status(status_history)
+    return effective_status not in {"draft", "planned"}
+
+
+def spec_validation_status(status_history: list[str]) -> str:
+    current_status = stringify(status_history[-1])
+    if current_status == "blocked":
+        normalized_history = [stringify(status) for status in status_history]
+        return infer_blocked_resume_status(normalized_history)
+    return current_status
+
+
+def spec_section_has_content(section_body: str) -> bool:
+    stripped_comments = re.sub(r"<!--.*?-->", "", section_body, flags=re.DOTALL)
+    for raw_line in stripped_comments.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^[-*+]\s*", "", line)
+        line = re.sub(r"^\[[ xX]\]\s*", "", line)
+        if line:
+            return True
+    return False
 
 
 def has_non_empty_verification_evidence(profile_dir: Path) -> bool:
@@ -639,16 +692,17 @@ def execution_profile_dir(execution_profile: str) -> str:
 def default_test_plan(execution_profile: str) -> str:
     profile_dir = execution_profile_dir(execution_profile)
     profile_steps = {
-        "web.browser": "- Run the browser or Playwright checks that cover the affected user flow.",
-        "backend.http": "- Run the HTTP-level checks that cover the affected endpoint or service flow.",
-        "backend.cli": "- Run the CLI or script entrypoint and verify its exit code and outputs.",
-        "backend.job": "- Trigger the job or worker path and verify the expected side effects.",
+        "web.browser": "- Run a real browser smoke or lightweight E2E flow that covers the affected user path.",
+        "backend.http": "- Run a real request or integration-style check that covers the affected endpoint or service flow.",
+        "backend.cli": "- Run the CLI or script entrypoint and verify its exit code, outputs, and failure path.",
+        "backend.job": "- Trigger the job or worker path and verify the expected side effects end to end.",
     }
     return "\n".join(
         [
             profile_steps[execution_profile],
+            "- Run the relevant build/lint/type/unit checks for the changed code path before asking for review.",
             f"- Capture evidence under verification/{profile_dir}/.",
-            "- Run the project checks that are relevant to this task.",
+            "- If automation is missing, record the gap and the minimum manual verification that was performed.",
         ]
     )
 

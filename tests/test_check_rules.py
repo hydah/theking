@@ -178,13 +178,16 @@ def make_valid_task_tree(
                 "- Implement the minimal workflow.",
                 "",
                 "## Non-Goals",
-                "- Extra automation.",
+                "- Avoid unrelated cleanup.",
                 "",
                 "## Acceptance",
                 "- Review loop is enforced.",
                 "",
                 "## Test Plan",
                 "- Run pytest.",
+                "",
+                "## Edge Cases",
+                "- Handle repeated runs safely.",
             ]
         )
         write_text(task_dir / "spec.md", spec_content)
@@ -262,8 +265,11 @@ def test_check_rejects_wrong_artifact_types(
 @pytest.mark.parametrize(
     ("target_text", "replacement", "expected_fragment"),
     [
+        ("## Scope\n- Implement the minimal workflow.", "", "Scope"),
+        ("## Non-Goals\n- Avoid unrelated cleanup.", "", "Non-Goals"),
         ("## Acceptance\n- Review loop is enforced.", "", "Acceptance"),
         ("## Test Plan\n- Run pytest.", "", "Test Plan"),
+        ("## Edge Cases\n- Handle repeated runs safely.", "", "Edge Cases"),
     ],
 )
 def test_check_fails_when_spec_is_missing_required_sections(
@@ -272,7 +278,11 @@ def test_check_fails_when_spec_is_missing_required_sections(
     replacement: str,
     expected_fragment: str,
 ) -> None:
-    task_dir = make_valid_task_tree(tmp_path)
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+    )
     spec_path = task_dir / "spec.md"
     spec_text = spec_path.read_text(encoding="utf-8")
     spec_path.write_text(spec_text.replace(target_text, replacement), encoding="utf-8")
@@ -281,6 +291,152 @@ def test_check_fails_when_spec_is_missing_required_sections(
 
     assert result.returncode != 0
     assert expected_fragment in result.stderr
+
+
+def test_check_fails_when_spec_section_contains_only_placeholder_content(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+    )
+    spec_path = task_dir / "spec.md"
+    spec_text = spec_path.read_text(encoding="utf-8")
+    spec_path.write_text(
+        spec_text.replace("- Implement the minimal workflow.", "<!-- fill me in -->"),
+        encoding="utf-8",
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0
+    assert "section must not be empty: Scope" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("status", "status_history"),
+    [
+        ("draft", ["draft"]),
+        ("planned", ["draft", "planned"]),
+    ],
+)
+def test_check_allows_placeholder_spec_before_red(
+    tmp_path: Path,
+    status: str,
+    status_history: list[str],
+) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status=status,
+        status_history=status_history,
+    )
+    spec_path = task_dir / "spec.md"
+    spec_text = spec_path.read_text(encoding="utf-8")
+    spec_path.write_text(
+        spec_text.replace("- Implement the minimal workflow.", "<!-- fill me in -->"),
+        encoding="utf-8",
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("status", "status_history"),
+    [
+        ("draft", ["draft"]),
+        ("planned", ["draft", "planned"]),
+    ],
+)
+def test_check_accepts_legacy_two_section_spec_before_red(
+    tmp_path: Path,
+    status: str,
+    status_history: list[str],
+) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status=status,
+        status_history=status_history,
+    )
+    write_text(
+        task_dir / "spec.md",
+        "\n".join(
+            [
+                "# Task Spec",
+                "",
+                "## Acceptance",
+                "- Review loop is enforced.",
+                "",
+                "## Test Plan",
+                "- Run pytest.",
+            ]
+        ),
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_check_rejects_legacy_two_section_spec_from_red_onward(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+    )
+    write_text(
+        task_dir / "spec.md",
+        "\n".join(
+            [
+                "# Task Spec",
+                "",
+                "## Acceptance",
+                "- Review loop is enforced.",
+                "",
+                "## Test Plan",
+                "- Run pytest.",
+            ]
+        ),
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0
+    assert "spec.md is missing required section: Scope" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("status", "status_history", "should_pass"),
+    [
+        ("blocked", ["draft", "planned", "blocked"], True),
+        ("blocked", ["draft", "planned", "red", "blocked"], False),
+    ],
+)
+def test_check_uses_pre_blocked_stage_for_spec_content_gate(
+    tmp_path: Path,
+    status: str,
+    status_history: list[str],
+    should_pass: bool,
+) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status=status,
+        status_history=status_history,
+    )
+    spec_path = task_dir / "spec.md"
+    spec_text = spec_path.read_text(encoding="utf-8")
+    spec_path.write_text(
+        spec_text.replace("- Implement the minimal workflow.", "<!-- fill me in -->"),
+        encoding="utf-8",
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    if should_pass:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert "section must not be empty: Scope" in result.stderr
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,7 @@ import pytest
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CANONICAL_SHARED = ".theking"
 PORTABLE_WORKFLOWCTL_CMD = "workflowctl"
@@ -78,7 +79,9 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert (theking_dir / "runs").is_dir()
     assert (project_dir / ".github" / "skills" / "workflow-governance" / "SKILL.md").is_file()
     assert (project_dir / ".github" / "prompts" / "decree.prompt.md").is_file()
-    assert "agents/catalog.md" in (theking_dir / "README.md").read_text(encoding="utf-8")
+    theking_readme = (theking_dir / "README.md").read_text(encoding="utf-8")
+    bootstrap_doc = (theking_dir / "bootstrap.md").read_text(encoding="utf-8")
+    assert "agents/catalog.md" in theking_readme
     assert "*** Add File" not in (theking_dir / "agents" / "README.md").read_text(encoding="utf-8")
     dev_workflow = (theking_dir / "context" / "dev-workflow.md").read_text(encoding="utf-8")
     governance_skill = (theking_dir / "skills" / "workflow-governance" / "SKILL.md").read_text(
@@ -98,9 +101,47 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in governance_skill
     assert f"{PORTABLE_WORKFLOWCTL_CMD} deactivate --project-dir ." in governance_skill
     assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --project-dir . --project-slug demo-app --theme <theme>" in decree_command
+    assert "先审上下文，再做分流" in governance_skill
+    assert governance_skill.index("上下文初勘") < governance_skill.index("此旨意走<完整|轻量>流程")
+    assert "light流程只减少规划开销" not in governance_skill
+    assert "轻量流程只减少规划开销，不降低交付标准" in governance_skill
+    assert "build/lint/type/unit + 画像验证" in governance_skill
+    assert "Phase 1: 审上下文" in decree_command
+    assert decree_command.index("Phase 1: 审上下文") < decree_command.index("Phase 2: 审旨")
+    assert "禁止在完成最小上下文初勘前宣告“轻量流程”" in decree_command
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in decree_command
+    assert "Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 全部 section 都必须保留" in decree_command
+    assert "build/lint/type/unit checks" in decree_command
     assert ".theking/skills/workflow-governance/SKILL.md" in decree_command
+    assert "开发工作流底线" in bootstrap_doc
+    assert "先做上下文初勘，再决定完整流程还是轻量流程" in bootstrap_doc
+    assert "`init-task` 生成的 `spec.md` 是占位稿" in bootstrap_doc
+    assert "错误示例" in bootstrap_doc
+    assert "正确示例" in bootstrap_doc
+    assert "工作流底线" in theking_readme
+    assert "轻量流程不允许跳过 spec、TDD、build/lint/type/unit、执行画像验证、code review、check/sprint-check" in theking_readme
+    assert "进入 `red` 前必须补全五个 section 的实际内容" in theking_readme
+    assert "先完成最小上下文初勘，再创建 sprint 或 task" in dev_workflow
+    assert "# 编辑 spec.md，补全五个 section 的实际内容" in dev_workflow
+    assert dev_workflow.index("init-task --project-dir . --project-slug demo-app") < dev_workflow.index(
+        "# 编辑 spec.md，补全五个 section 的实际内容"
+    ) < dev_workflow.index("advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-demo --to-status red")
     assert not (project_dir / "project.md").exists()
     assert not (project_dir / "sprints").exists()
+
+
+def test_source_docs_explain_context_before_triage_and_spec_before_red() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    skill = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "先做上下文初勘，再决定完整流程还是轻量流程" in readme
+    assert "轻量流程只减少规划开销，不减少交付要求" in readme
+    assert readme.index("workflowctl init-task --project-dir . --project-slug demo-app --sprint sprint-001-foundation --slug login-flow") < readme.index(
+        "# 编辑 .theking/.../spec.md，补全 Scope / Non-Goals / Acceptance / Test Plan / Edge Cases"
+    ) < readme.index("workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status red")
+
+    assert "第一步不是宣告“轻量流程”，而是完成最小上下文初勘" in skill
+    assert "轻量流程只减少 planner 拆解开销，不减少交付要求" in skill
 
 
 def test_init_project_quotes_shell_paths_in_generated_examples(tmp_path: Path) -> None:

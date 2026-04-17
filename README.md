@@ -79,6 +79,7 @@ workflowctl ensure --project-dir . --project-slug demo-app
 workflowctl init-sprint --project-dir . --project-slug demo-app --theme foundation
 workflowctl init-task --project-dir . --project-slug demo-app --sprint sprint-001-foundation --slug login-flow --title "Login Flow" --task-type auth --execution-profile backend.http
 workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status planned
+# 编辑 .theking/.../spec.md，补全 Scope / Non-Goals / Acceptance / Test Plan / Edge Cases
 workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status red
 workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status green
 workflowctl init-review-round --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow
@@ -86,6 +87,34 @@ workflowctl check --task-dir .theking/workflows/demo-app/sprints/sprint-001-foun
 ```
 
 兼容性说明：推荐长期只记住“在项目根目录运行时传 `--project-dir .`”。`--project-dir` 要求项目目录名和 `--project-slug` 精确一致；如果你的目录名和 slug 不一致，继续使用 `--root <项目父目录> --project-slug <slug>`。如果你手上只有 `.theking` 路径，传 `--project-dir .theking` 即可。
+
+## 工作流底线
+
+- 先做上下文初勘，再决定完整流程还是轻量流程。至少查看相关代码、测试、文档、报错或接口契约中的直接证据。
+- 轻量流程只减少规划开销，不减少交付要求。spec、TDD、build/lint/type/unit、执行画像验证、code review、check/sprint-check 都不能跳过。
+- `init-task` 生成的 `spec.md` 是占位稿。任务可以先停在 `draft` 或 `planned`，但进入 `red` 之前必须补全 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 五段内容。
+
+不要让 AI 输出这种偷懒判断：
+
+```text
+👑 [decree] 此旨意走轻量流程。
+理由：改动不大，应该只改 1-2 个文件。
+```
+
+至少要先输出这种基于证据的初勘，再做分流：
+
+```text
+👑 [decree] 上下文初勘：
+- 已查看：<代码/测试/文档/报错>
+- 影响面：<模块/接口/用户流程>
+- 风险标签：<无 / auth / input / api / web.browser / ...>
+- 未决问题：<无 / 列表>
+
+👑 [decree] 此旨意走<完整|轻量>流程。
+理由：<基于已查看证据的判断>
+```
+
+生成到项目里的权威说明见 `.theking/bootstrap.md` 和 `.theking/skills/workflow-governance/SKILL.md`。
 
 ## 开发这个仓库
 

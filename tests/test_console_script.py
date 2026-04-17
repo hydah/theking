@@ -26,6 +26,32 @@ def run_console_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def write_complete_spec(task_dir: Path) -> None:
+    (task_dir / "spec.md").write_text(
+        "\n".join(
+            [
+                "# Task Spec",
+                "",
+                "## Scope",
+                "- Complete the minimal console workflow successfully.",
+                "",
+                "## Non-Goals",
+                "- No unrelated cleanup.",
+                "",
+                "## Acceptance",
+                "- The task can advance into review with the expected artifacts.",
+                "",
+                "## Test Plan",
+                "- Run the console workflow commands in sequence.",
+                "",
+                "## Edge Cases",
+                "- Re-running the status transitions keeps task history valid.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_workflowctl_console_script_help_runs() -> None:
     result = run_console_cli(["--help"])
 
@@ -132,6 +158,16 @@ def test_workflowctl_console_script_runs_minimal_task_workflow(tmp_path: Path) -
         "--to-status",
         "red",
     ])
+
+    write_complete_spec(task_dir)
+
+    retry_red_result = run_console_cli([
+        "advance-status",
+        "--task-dir",
+        str(task_dir),
+        "--to-status",
+        "red",
+    ])
     green_result = run_console_cli([
         "advance-status",
         "--task-dir",
@@ -150,7 +186,9 @@ def test_workflowctl_console_script_runs_minimal_task_workflow(tmp_path: Path) -
     assert task_result.returncode == 0, task_result.stderr
     assert check_result.returncode == 0, check_result.stderr
     assert planned_result.returncode == 0, planned_result.stderr
-    assert red_result.returncode == 0, red_result.stderr
+    assert red_result.returncode != 0
+    assert "section must not be empty: Scope" in red_result.stderr
+    assert retry_red_result.returncode == 0, retry_red_result.stderr
     assert green_result.returncode == 0, green_result.stderr
     assert review_round_result.returncode == 0, review_round_result.stderr
     assert task_dir.is_dir()

@@ -13,60 +13,88 @@ description: |
 
 **所有需求都通过 sprint 跟踪**，无论大小。区别在于流程轻重，不在于是否跟踪。
 
-## 分流决策（每次任务的第一步）
+**先审上下文，再做分流。** 没看相关代码、测试、文档、报错或接口契约之前，不得宣告“轻量流程”。
 
-收到任务后，评估规模，选择流程级别：
+**轻量流程只减少规划开销，不降低交付标准。** spec、TDD、review、构建/测试/验证、check/sprint-check 的底线一致。
+
+## 分流决策（完成最小上下文初勘后）
+
+收到任务后，先完成最小上下文初勘，再评估流程级别。最小上下文初勘至少包括：
+
+- 阅读相关代码、测试、文档、错误日志或接口定义中的直接证据
+- 标记影响面：文件、模块、接口、数据契约、用户流程
+- 识别风险标签：auth、input、api、web.browser、schema/config/public contract
+- 输出仍不确定的点；只要存在关键未知项，默认升级到完整流程
+
+分流时必须给出“上下文初勘 + 流程结论”，禁止只凭需求描述或预计文件数做主观判断：
+
+```
+👑 [decree] 上下文初勘：
+- 已查看：<代码/测试/文档/报错>
+- 影响面：<模块/接口/用户流程>
+- 风险标签：<无 / auth / input / api / web.browser / ...>
+
+👑 [decree] 此旨意走<完整|轻量>流程。
+理由：<基于已查看证据的判断>
+```
 
 ### 完整流程
 
-```
-👑 [decree] 此旨意走完整流程。
-理由：<一句话>
-```
+条件：出现以下任一情况就走完整流程：
 
-条件：改动涉及 3+ 文件、需要架构决策、预估 > 30 分钟、多 task 依赖。
+- 影响面跨 3+ 文件、跨模块或跨团队契约
+- 需要架构决策、数据迁移、配置变更或公共接口变更
+- 存在多 task 依赖、回滚复杂度高，或关键未知项尚未排清
+- 触发高风险画像，且需要多阶段验证才能确认结果
 
 - planner 拆解为多 task + 依赖图
-- 每个 task 写完整 spec（scope、acceptance、test plan、edge cases）
+- 每个 task 写完整 spec（所有 section 都保留）
 - 多轮 review loop
 - 知识提炼
 
 ### 轻量流程
 
-```
-👑 [decree] 此旨意走轻量流程。
-理由：<一句话>
-```
+只有在完成初勘后，同时满足以下条件，才允许走轻量流程：
 
-条件：改动 ≤ 2 文件、逻辑简单、无架构影响。
+- 能确认是单一变更单元，单 task 即可闭环
+- 无 schema/config/public contract 变化，无额外架构分叉
+- 已有现成实现模式可复用，不需要 planner 拆多 task
+- 风险与验证路径明确，不存在关键未知项
 
 - 单 task sprint（跳过 planner）
-- spec 只写 scope + acceptance
+- spec 仍使用同一模板、保留全部 section，但每节可短写
 - 通常 1 轮 review
 - 知识提炼按需
+
+若轻量流程执行中发现隐藏耦合、风险扩大或验证不足，必须立即升级为完整流程，不能硬撑到底。
 
 ### 对比表
 
 | 环节 | 完整流程 | 轻量流程 |
 |------|---------|---------|
+| 上下文初勘 | **必须** | **必须** |
 | 创建 sprint + task | ✓ 多 task | ✓ 单 task |
 | planner 拆解 | ✓ | 跳过 |
-| spec.md | 完整填写 | scope + acceptance |
+| spec.md | 同模板全部 section，详细填写 | 同模板全部 section，可短写但不得省略 |
 | tdd-guide | **必须** | **必须** |
+| build/lint/type/unit + 画像验证 | **必须** | **必须** |
 | code-reviewer | **必须** | **必须** |
 | security/e2e review | 条件触发 | 条件触发 |
-| 多轮 review loop | 可能多轮 | 通常 1 轮 |
+| review loop | 至少 1 轮，可能多轮 | 至少 1 轮，通常 1 轮 |
+| check + sprint-check | **必须** | **必须** |
 | 知识提炼 | ✓ | 按需 |
 
-**不变的底线**：无论哪种流程，sprint 跟踪、TDD、code-review 不可绕过。
+**不变的底线**：无论哪种流程，sprint 跟踪、完整 spec、TDD、code-review、基本验证、artifact 校验都不可绕过。
 
 ## 硬规则
 
 1. **所有需求都有 sprint** — sprint 是最小跟踪单元，不可绕过
-2. **先红后绿** — 实现前先启动 tdd-guide（门下侍中），必要时补 e2e-runner（兵部尚书）
-3. **每次改动必须 review** — 御史大夫（code-reviewer）是必经之路；触及 auth/input/api 或 `backend.http` 画像任务，额外召 刑部尚书（security-reviewer）
-4. **没有 spec.md 不进入实现** — 轻量流程也要写 scope + acceptance
-5. **没有 resolved review 不进入 done** — review pair 必须完整
+2. **先审上下文，再做分流** — 禁止仅凭需求描述、文件数猜测或主观“简单/复杂”判流程
+3. **先红后绿** — 实现前先启动 tdd-guide（门下侍中），必要时补 e2e-runner（兵部尚书）
+4. **每次改动必须 review** — 御史大夫（code-reviewer）是必经之路；触及 auth/input/api 或 `backend.http` 画像任务，额外召刑部尚书（security-reviewer）
+5. **没有完整 spec 不进入实现** — 轻量流程也要保留 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 全部 section
+6. **没有基本验证不进入 ready_to_merge/done** — 必须运行与改动相关的 build/lint/type/unit 检查，并补齐执行画像要求的验证；无自动化时需明确记录缺口与最小人工验证
+7. **没有 resolved review 或校验证据不进入 done** — review pair 与 verification evidence 必须完整
 
 ## 状态机
 
@@ -82,18 +110,21 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 
 ### 完整流程
 
-1. **Bootstrap** — `workflowctl ensure`（幂等）
-2. **规划 Sprint** — `init-sprint` + `init-sprint-plan`（planner 拆解，批量创建 task）
-3. **逐个 Task**：激活 → 写 spec → TDD → review → 校验 → done
-4. **Sprint 校验** — `sprint-check`
-5. **收尾** — 知识提炼 + `deactivate`
+1. **上下文初勘** — 搜代码、测试、文档、报错，确认影响面与风险
+2. **Bootstrap** — `workflowctl ensure`（幂等）
+3. **规划 Sprint** — `init-sprint` + `init-sprint-plan`（planner 拆解，批量创建 task）
+4. **逐个 Task**：激活 → 写完整 spec → TDD → build/lint/type/unit + 画像验证 → review → `check` → done
+5. **Sprint 校验** — `sprint-check`
+6. **收尾** — 知识提炼 + `deactivate`
 
 ### 轻量流程
 
-1. **Bootstrap** — `workflowctl ensure`（幂等）
-2. **创建单 Task Sprint** — `init-sprint` + `init-task`（跳过 planner）
-3. **激活** → 写简化 spec（scope + acceptance） → TDD → review → 校验 → done
-4. **停用** — `deactivate`
+1. **上下文初勘** — 先确认这真的是单一变更单元，而不是表面轻量
+2. **Bootstrap** — `workflowctl ensure`（幂等）
+3. **创建单 Task Sprint** — `init-sprint` + `init-task`（跳过 planner）
+4. **激活** → 写完整 spec 模板（可短写，不可缺节） → TDD → build/lint/type/unit + 画像验证 → review → `check` → done
+5. **Sprint 校验** — `sprint-check`
+6. **停用** — `deactivate`
 
 ### workflowctl 命令参考
 

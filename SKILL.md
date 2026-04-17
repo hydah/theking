@@ -48,6 +48,32 @@ workflowctl ensure --project-dir . --project-slug my-app
 6. 生成 `CLAUDE.md` / `CODEBUDDY.md` / `AGENTS.md` 入口文件
 7. 生成 `project.md`（如果不存在）
 
+## Bootstrap 后的工作流底线
+
+初始化完成后，日常开发由项目内的 `workflow-governance` skill 接管。第一步不是宣告“轻量流程”，而是完成最小上下文初勘：先看相关代码、测试、文档、报错，再决定走完整流程还是轻量流程。
+
+轻量流程只减少 planner 拆解开销，不减少交付要求：完整 spec、TDD、build/lint/type/unit、执行画像验证、code review、check/sprint-check 仍然是底线。
+
+显式反例：
+
+```text
+👑 [decree] 此旨意走轻量流程。
+理由：看起来只是个小 bug。
+```
+
+正确做法：
+
+```text
+👑 [decree] 上下文初勘：
+- 已查看：<代码/测试/文档/报错>
+- 影响面：<模块/接口/用户流程>
+- 风险标签：<无 / auth / input / api / web.browser / ...>
+- 未决问题：<无 / 列表>
+
+👑 [decree] 此旨意走<完整|轻量>流程。
+理由：<基于已查看证据的判断>
+```
+
 ## Post-Bootstrap
 
 初始化完成后，检查 `.theking/context/` 下的文件是否包含 `<!-- PLACEHOLDER -->` 标记。如果有，按 knowledge-base skill 的分析流程主动填充。

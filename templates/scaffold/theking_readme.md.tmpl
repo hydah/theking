@@ -29,3 +29,9 @@
 - `memory/MEMORY.md` 只保留尚未正式化的补充约定
 - workflow 工件统一放到 `workflows/`
 - `runs/` 只放临时输出，不承载长期知识
+
+## 工作流底线
+
+- 开发前先看 `bootstrap.md` 与 `skills/workflow-governance/SKILL.md`，先做上下文初勘，再决定完整流程还是轻量流程。
+- 轻量流程不允许跳过 spec、TDD、build/lint/type/unit、执行画像验证、code review、check/sprint-check。
+- `workflows/` 下新建 task 时生成的 `spec.md` 只是占位稿；进入 `red` 前必须补全五个 section 的实际内容。

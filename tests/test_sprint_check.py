@@ -30,6 +30,32 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def write_complete_spec(task_dir: Path) -> None:
+    write_text(
+        task_dir / "spec.md",
+        "\n".join(
+            [
+                "# Task Spec",
+                "",
+                "## Scope",
+                "- Complete the requested workflow change for this task.",
+                "",
+                "## Non-Goals",
+                "- No unrelated cleanup.",
+                "",
+                "## Acceptance",
+                "- The task can move through review with valid artifacts.",
+                "",
+                "## Test Plan",
+                "- Run the relevant verification for this task.",
+                "",
+                "## Edge Cases",
+                "- Repeated transitions keep task state consistent.",
+            ]
+        ),
+    )
+
+
 def parse_frontmatter(text: str) -> dict[str, object]:
     lines = text.splitlines()
     assert lines[0].strip() == "---"
@@ -204,6 +230,7 @@ def test_sprint_check_fails_when_ready_to_merge_task_has_no_review_pair(tmp_path
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
     task_md = sprint_dir / "tasks" / "TASK-001-task-a" / "task.md"
+    write_complete_spec(task_dir)
     task_md.write_text(
         task_md.read_text(encoding="utf-8").replace(
             "status: draft\nstatus_history:\n  - draft",
@@ -229,6 +256,7 @@ def test_sprint_check_fails_when_ready_to_merge_task_has_no_verification_evidenc
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
     task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
     task_md.write_text(
         task_md.read_text(encoding="utf-8").replace(
             "status: draft\nstatus_history:\n  - draft",
@@ -460,6 +488,7 @@ def test_advance_status_rejects_in_review_target_and_keeps_task_unchanged(tmp_pa
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
     task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
     set_task_status(
         task_md,
         status="green",
@@ -483,6 +512,7 @@ def test_init_review_round_from_green_sets_first_round_and_scaffolds_code_review
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
     task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
     set_task_status(
         task_md,
         status="green",
@@ -512,6 +542,7 @@ def test_init_review_round_from_green_scaffolds_security_review_when_required(tm
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
     task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
     content = task_md.read_text(encoding="utf-8")
     content = content.replace("task_type: general", "task_type: auth")
     content = content.replace("execution_profile: backend.cli", "execution_profile: backend.http")
@@ -541,6 +572,7 @@ def test_init_review_round_from_green_scaffolds_e2e_review_when_required(tmp_pat
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
     task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
     content = task_md.read_text(encoding="utf-8")
     content = content.replace("task_type: general", "task_type: frontend")
     content = content.replace("execution_profile: backend.cli", "execution_profile: web.browser")
@@ -569,6 +601,7 @@ def test_init_review_round_from_changes_requested_increments_round(tmp_path: Pat
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
     task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
     set_task_status(
         task_md,
         status="changes_requested",

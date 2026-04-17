@@ -50,6 +50,32 @@ theking 既是**项目知识库**，也是**工作流治理工具**：
 6. 开发工作流治理：`.theking/skills/workflow-governance/SKILL.md`
 7. 知识沉淀规范：`.theking/skills/knowledge-base/SKILL.md`
 
+## 开发工作流底线
+
+- 先做上下文初勘，再决定完整流程还是轻量流程。至少查看相关代码、测试、文档、报错或接口契约中的直接证据。
+- 轻量流程只减少规划开销，不减少交付要求。spec、TDD、build/lint/type/unit、执行画像验证、code review、check/sprint-check 都不能跳过。
+- `init-task` 生成的 `spec.md` 是占位稿。任务可先停在 `draft` 或 `planned`，但进入 `red` 前必须补全 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 五段内容。
+
+错误示例：
+
+```text
+👑 [decree] 此旨意走轻量流程。
+理由：预计只改 1-2 个文件。
+```
+
+正确示例：
+
+```text
+👑 [decree] 上下文初勘：
+- 已查看：<代码/测试/文档/报错>
+- 影响面：<模块/接口/用户流程>
+- 风险标签：<无 / auth / input / api / web.browser / ...>
+- 未决问题：<无 / 列表>
+
+👑 [decree] 此旨意走<完整|轻量>流程。
+理由：<基于已查看证据的判断>
+```
+
 ## 知识沉淀约定
 
 - 项目分析、技术调研、竞品对比 → 写入 `.theking/context/`

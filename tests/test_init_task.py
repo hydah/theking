@@ -59,6 +59,32 @@ def parse_frontmatter(text: str) -> dict[str, object]:
     raise AssertionError("frontmatter must be closed")
 
 
+def write_complete_spec(task_dir: Path) -> None:
+    (task_dir / "spec.md").write_text(
+        "\n".join(
+            [
+                "# Task Spec",
+                "",
+                "## Scope",
+                "- Align the request payload with the backend contract.",
+                "",
+                "## Non-Goals",
+                "- No unrelated refactors.",
+                "",
+                "## Acceptance",
+                "- The affected workflow reaches the expected task state.",
+                "",
+                "## Test Plan",
+                "- Run the relevant automated checks for this task.",
+                "",
+                "## Edge Cases",
+                "- Re-running the flow keeps the task tree consistent.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def workflow_root(tmp_path: Path) -> Path:
     return tmp_path / "demo-app" / ".theking" / "workflows" / "demo-app"
 
@@ -147,8 +173,11 @@ def test_init_task_creates_minimal_task_tree_and_required_fields(tmp_path: Path)
     assert frontmatter["requires_security_review"] is True
 
     spec_text = spec_md.read_text(encoding="utf-8")
+    assert "## Scope" in spec_text
+    assert "## Non-Goals" in spec_text
     assert "## Acceptance" in spec_text
     assert "## Test Plan" in spec_text
+    assert "## Edge Cases" in spec_text
 
 
 def test_init_task_accepts_project_root_as_project_dir(tmp_path: Path) -> None:
@@ -188,6 +217,64 @@ def test_init_task_accepts_project_root_as_project_dir(tmp_path: Path) -> None:
         / "TASK-001-login-flow"
         / "task.md"
     ).is_file()
+
+
+def test_init_task_generated_spec_requires_author_input_before_red(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+
+    result = run_cli(
+        [
+            "init-task",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--slug",
+            "login-flow",
+            "--title",
+            "Login Flow",
+            "--task-type",
+            "auth",
+            "--execution-profile",
+            "backend.http",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    task_dir = (
+        workflow_root(tmp_path)
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-login-flow"
+    )
+    check_result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+    planned_result = run_cli(
+        ["advance-status", "--task-dir", str(task_dir), "--to-status", "planned"],
+        cwd=tmp_path,
+    )
+    red_result = run_cli(
+        ["advance-status", "--task-dir", str(task_dir), "--to-status", "red"],
+        cwd=tmp_path,
+    )
+
+    assert check_result.returncode == 0, check_result.stderr
+    assert planned_result.returncode == 0, planned_result.stderr
+    assert red_result.returncode != 0
+    assert "section must not be empty: Scope" in red_result.stderr
+
+    write_complete_spec(task_dir)
+
+    retry_red_result = run_cli(
+        ["advance-status", "--task-dir", str(task_dir), "--to-status", "red"],
+        cwd=tmp_path,
+    )
+
+    assert retry_red_result.returncode == 0, retry_red_result.stderr
 
 
 def test_init_task_rejects_sprint_path_escape(tmp_path: Path) -> None:

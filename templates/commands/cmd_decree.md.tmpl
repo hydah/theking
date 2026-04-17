@@ -28,29 +28,58 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 
 收到旨意后，按以下步骤自动编排。**所有需求都必须先建 sprint，再写代码，无例外。**
 
-### Phase 1: 审旨 — 分流决策
+### Phase 1: 审上下文 — 最小初勘
 
-评估需求规模，选择流程级别（标准见 workflow-governance）：
+先找证据，再决定流程级别。至少完成以下动作：
 
-**完整流程**（3+ 文件、架构决策、> 30 分钟）：
+1. 搜索并阅读直接相关的代码、测试、文档、报错、接口或数据契约
+2. 标出影响面：涉及哪些文件、模块、用户流程、外部接口
+3. 标记风险：是否触发 auth、input、api、web.browser、schema/config/public contract 变化
+4. 输出仍不确定的点；只要存在关键未知项，后续一律按完整流程处理
+
+输出格式固定如下：
+
 ```
-👑 [decree] 此旨意走完整流程。
-理由：<一句话>
-下一步：召中书令（planner）谋划，创建 sprint。
+👑 [decree] 上下文初勘：
+- 已查看：<代码/测试/文档/报错>
+- 影响面：<模块/接口/用户流程>
+- 风险标签：<无 / auth / input / api / web.browser / ...>
+- 未决问题：<无 / 列表>
 ```
 
-**轻量流程**（≤ 2 文件、逻辑简单）：
-```
-👑 [decree] 此旨意走轻量流程。
-理由：<一句话>
-下一步：创建单 task sprint。
-```
-
-**⛔ 禁止在 Phase 2 完成前写任何实现代码。分流决策输出后，立即进入 Phase 2。**
+**⛔ 禁止在完成最小上下文初勘前宣告“轻量流程”，也禁止开始实现代码。**
 
 ---
 
-### Phase 2: 谋划 — Sprint 规划（必须完成才能写代码）
+### Phase 2: 审旨 — 分流决策
+
+基于已查看的证据，选择流程级别（标准见 workflow-governance）：
+
+**完整流程**（常见信号：3+ 文件、架构决策、> 30 分钟，或存在关键未知项）：
+```
+👑 [decree] 此旨意走完整流程。
+理由：<基于上下文初勘的证据>
+下一步：召中书令（planner）谋划，创建 sprint。
+```
+
+**轻量流程**（只在已完成初勘且能确认单一变更单元时成立）：
+```
+👑 [decree] 此旨意走轻量流程。
+理由：<基于上下文初勘的证据>
+下一步：创建单 task sprint。
+```
+
+**⛔ 若仍有关键未知项，或执行中发现隐藏耦合/验证范围扩大，必须升级到完整流程。**
+
+---
+
+### Phase 3: 谋划 — Sprint 规划（必须完成才能写代码）
+
+先执行 Bootstrap（幂等）：
+
+```bash
+{theking_cmd} ensure --project-dir {workflow_root_quoted} --project-slug {project_slug}
+```
 
 #### 完整流程
 
@@ -72,11 +101,11 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
    {theking_cmd} init-task --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --slug <slug> --title <title> --task-type <type>
    ```
 
-**✅ 检查点：sprint 和 task 已创建，才能进入 Phase 3。**
+**✅ 检查点：sprint 和 task 已创建，才能进入 Phase 4。**
 
 ---
 
-### Phase 3: 领旨 — 开发
+### Phase 4: 领旨 — 开发
 
 按依赖图拓扑排序，无依赖的 task **并行启动**（轻量流程只有 1 个 task）。
 
@@ -88,31 +117,38 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
    ```
 
 2. **写 Spec**
-   - 完整流程：填写全部 section（scope、acceptance、test plan、edge cases）
-   - 轻量流程：只写 scope + acceptance
+   - 完整流程与轻量流程都使用同一模板
+   - Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 全部 section 都必须保留
+   - 轻量流程可以短写，但不得留空、不得省略章节
 
 3. **TDD 循环** — 召 **门下侍中**（tdd-guide）封驳审核：先写测试 → 最小实现 → 重构
 
-4. **Review** — 按 workflow-governance agent 触发规则：
+4. **基础验证** — 在进入 review 前，必须运行与改动相关的 build/lint/type/unit checks，并补齐执行画像要求的验证：
+   - `web.browser`：至少做一次真实页面 smoke 或轻量 e2e
+   - `backend.http`：至少做一次真实请求或集成式验证
+   - `backend.cli` / `backend.job`：至少执行真实入口并核对输出或副作用
+   - 将命令、结果、截图/日志等证据写入 `verification/<profile>/`
+
+5. **Review** — 按 workflow-governance agent 触发规则：
    - **御史大夫**（code-reviewer）— 必须
    - **刑部尚书**（security-reviewer）— auth/input/api 或 backend.http 时
    - **兵部尚书**（e2e-runner）— web.browser 时
    - 有 CRITICAL/HIGH findings → 修复 → 再 review
 
-5. **构建失败** → 召 **工部尚书**（build-error-resolver）排障修复
+6. **构建失败** → 召 **工部尚书**（build-error-resolver）排障修复
 
-6. **性能问题** → 召 **户部尚书**（perf-optimizer）度支钱粮
+7. **性能问题** → 召 **户部尚书**（perf-optimizer）度支钱粮
 
-7. **校验**
+8. **校验**
    ```bash
    {theking_cmd} check --task-dir <TASK_DIR>
    ```
 
-8. **完成** — status → `done`，停用 task
+9. **完成** — status → `done`，但只在 review pair 与 verification evidence 完整后进入完成态
 
 ---
 
-### Phase 4: 收旨 — 收尾
+### Phase 5: 收旨 — 收尾
 
 1. Sprint 级校验：
    ```bash

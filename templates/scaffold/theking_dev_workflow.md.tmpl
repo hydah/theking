@@ -53,13 +53,16 @@
 
 ## workflowctl
 
-以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。优先把 `--project-dir` 传当前项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可：
+以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。优先把 `--project-dir` 传当前项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可。
+
+先完成最小上下文初勘，再创建 sprint 或 task。`init-task` 生成的 `spec.md` 是占位稿，进入 `red` 前必须补全 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 五段内容：
 
 ```bash
 {theking_cmd} init-project --project-dir {workflow_root_quoted} --project-slug {project_slug}
 {theking_cmd} init-sprint --project-dir {workflow_root_quoted} --project-slug {project_slug} --theme foundation
 {theking_cmd} init-task --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint sprint-001-foundation --slug demo --title "Demo" --task-type frontend --execution-profile web.browser
 {theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status planned
+# 编辑 spec.md，补全五个 section 的实际内容
 {theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status red
 {theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status green
 {theking_cmd} init-review-round --task-dir {demo_task_dir_quoted}
