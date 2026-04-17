@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 import re
@@ -289,6 +290,32 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_locator_arguments(ensure)
     add_project_slug_argument(ensure)
     ensure.set_defaults(handler=handle_ensure)
+
+    upgrade = add_command_parser(
+        subparsers,
+        "upgrade",
+        help_text="Refresh theking-owned runtime files after a theking skill upgrade.",
+        example="workflowctl upgrade --project-dir . --project-slug my-app --dry-run",
+    )
+    add_project_locator_arguments(upgrade)
+    add_project_slug_argument(upgrade)
+    upgrade_mode = upgrade.add_mutually_exclusive_group()
+    upgrade_mode.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite drifted files after backing them up under .theking/.backups/<timestamp>/.",
+    )
+    upgrade_mode.add_argument(
+        "--adopt",
+        action="store_true",
+        help="Accept current on-disk content as the new baseline without overwriting.",
+    )
+    upgrade.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the upgrade plan without touching any files.",
+    )
+    upgrade.set_defaults(handler=handle_upgrade)
 
     checkpoint = add_command_parser(
         subparsers,
@@ -1367,6 +1394,204 @@ def update_sprint_overview(
     sprint_md_path.write_text(existing_content, encoding="utf-8")
 
 
+RUNTIME_MANIFEST_RELATIVE = PurePosixPath(THEKING_DIRNAME) / ".manifests" / "runtime.json"
+RUNTIME_BACKUP_ROOT_RELATIVE = PurePosixPath(THEKING_DIRNAME) / ".backups"
+
+
+def build_runtime_template_vars(project_slug: str) -> dict[str, str]:
+    theking_cmd = "workflowctl"
+    workflow_root = "."
+    workflow_root_quoted = shlex.quote(workflow_root)
+    project_dir_hint = "."
+    project_dir_quoted = shlex.quote(project_dir_hint)
+    demo_task_dir_quoted = shlex.quote(
+        (
+            PurePosixPath(THEKING_DIRNAME)
+            / "workflows"
+            / project_slug
+            / "sprints"
+            / "sprint-001-foundation"
+            / "tasks"
+            / "TASK-001-demo"
+        ).as_posix()
+    )
+    return dict(
+        project_slug=project_slug,
+        project_title=humanize_slug(project_slug),
+        theking_cmd=theking_cmd,
+        workflow_root=workflow_root,
+        workflow_root_quoted=workflow_root_quoted,
+        project_dir=project_dir_hint,
+        project_dir_quoted=project_dir_quoted,
+        demo_task_dir_quoted=demo_task_dir_quoted,
+    )
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def runtime_manifest_path(project_dir: Path) -> Path:
+    return project_dir / RUNTIME_MANIFEST_RELATIVE
+
+
+def load_runtime_manifest(project_dir: Path) -> dict[str, str]:
+    path = runtime_manifest_path(project_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    files = data.get("files")
+    if not isinstance(files, dict):
+        return {}
+    return {str(k): str(v) for k, v in files.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def save_runtime_manifest(project_dir: Path, files: dict[str, str]) -> None:
+    path = runtime_manifest_path(project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "files": dict(sorted(files.items())),
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def collect_managed_runtime_artifacts(
+    project_dir: Path, project_slug: str
+) -> list[tuple[Path, str]]:
+    """Return (absolute_path, rendered_content) for every file whose canonical
+    content is fully owned by theking templates. Intentionally excludes user
+    content (project-overview.md, MEMORY.md) and entry files (CLAUDE.md,
+    CODEBUDDY.md, AGENTS.md), which have bespoke update semantics.
+    """
+    theking_dir = get_theking_dir(project_dir)
+    tmpl_vars = build_runtime_template_vars(project_slug)
+    artifacts: list[tuple[Path, str]] = []
+
+    def add(relative: str, content: str) -> None:
+        artifacts.append((theking_dir / relative, content))
+
+    add(
+        "README.md",
+        render_template(
+            "theking_readme.md.tmpl",
+            project_slug=project_slug,
+            project_title=humanize_slug(project_slug),
+        ),
+    )
+    add(
+        "bootstrap.md",
+        render_template(
+            "theking_bootstrap.md.tmpl",
+            project_slug=project_slug,
+            project_title=humanize_slug(project_slug),
+        ),
+    )
+    add(
+        "context/architecture.md",
+        render_template("theking_architecture.md.tmpl", project_slug=project_slug),
+    )
+    add(
+        "context/dev-workflow.md",
+        render_template("theking_dev_workflow.md.tmpl", **tmpl_vars),
+    )
+    add(
+        "agents/README.md",
+        render_template("theking_agents_readme.md.tmpl", project_slug=project_slug),
+    )
+    add(
+        "agents/catalog.md",
+        render_template("theking_agents_catalog.md.tmpl", project_slug=project_slug),
+    )
+    add(
+        "verification/README.md",
+        render_template("theking_verification_readme.md.tmpl", project_slug=project_slug),
+    )
+
+    agent_definitions = [
+        ("planner.md", "agent_planner.md.tmpl"),
+        ("tdd-guide.md", "agent_tdd_guide.md.tmpl"),
+        ("code-reviewer.md", "agent_code_reviewer.md.tmpl"),
+        ("security-reviewer.md", "agent_security_reviewer.md.tmpl"),
+        ("e2e-runner.md", "agent_e2e_runner.md.tmpl"),
+        ("architect.md", "agent_architect.md.tmpl"),
+        ("build-error-resolver.md", "agent_build_error_resolver.md.tmpl"),
+        ("doc-updater.md", "agent_doc_updater.md.tmpl"),
+        ("refactor-cleaner.md", "agent_refactor_cleaner.md.tmpl"),
+        ("perf-optimizer.md", "agent_perf_optimizer.md.tmpl"),
+    ]
+    for filename, template_name in agent_definitions:
+        add(f"agents/{filename}", render_template(template_name, project_slug=project_slug))
+
+    hook_files = [
+        ("check-spec-exists.js", "hook_check_spec.js.tmpl"),
+        ("check-task-status.js", "hook_check_status.js.tmpl"),
+        ("remind-review.js", "hook_remind_review.js.tmpl"),
+    ]
+    for filename, template_name in hook_files:
+        add(f"hooks/{filename}", read_template_raw(template_name))
+
+    skill_definitions = [
+        ("workflow-governance", "skill_workflow_governance.md.tmpl"),
+        ("knowledge-base", "skill_knowledge_base.md.tmpl"),
+    ]
+    for skill_name, template_name in skill_definitions:
+        add(
+            f"skills/{skill_name}/SKILL.md",
+            render_template(template_name, **tmpl_vars),
+        )
+
+    command_definitions = [
+        ("decree.md", "cmd_decree.md.tmpl"),
+        ("analyze-project.md", "cmd_analyze_project.md.tmpl"),
+    ]
+    for cmd_filename, template_name in command_definitions:
+        rendered = render_template(template_name, **tmpl_vars)
+        add(f"commands/{cmd_filename}", rendered)
+        prompt_name = cmd_filename.replace(".md", ".prompt.md")
+        add(f"prompts/{prompt_name}", rendered)
+
+    return artifacts
+
+
+def _manifest_key(project_dir: Path, absolute_path: Path) -> str:
+    return absolute_path.relative_to(project_dir).as_posix()
+
+
+def sync_runtime_manifest_baseline(project_dir: Path, project_slug: str) -> None:
+    """Populate manifest entries for files whose on-disk content equals the
+    current template output. Leaves drifted files untouched (they will be
+    reported during upgrade)."""
+    artifacts = collect_managed_runtime_artifacts(project_dir, project_slug)
+    manifest = load_runtime_manifest(project_dir)
+    changed = False
+    for absolute_path, rendered in artifacts:
+        key = _manifest_key(project_dir, absolute_path)
+        if not absolute_path.exists():
+            if key in manifest:
+                del manifest[key]
+                changed = True
+            continue
+        try:
+            on_disk = absolute_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        on_disk_hash = _sha256_text(on_disk)
+        template_hash = _sha256_text(rendered)
+        expected = manifest.get(key)
+        if on_disk_hash == template_hash and expected != template_hash:
+            manifest[key] = template_hash
+            changed = True
+    if changed:
+        save_runtime_manifest(project_dir, manifest)
+
+
 def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
     theking_dir = get_theking_dir(project_dir)
     context_dir = theking_dir / "context"
@@ -1419,32 +1644,7 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
         (verification_dir / profile_name).mkdir(parents=True, exist_ok=True)
 
     # --- Shared template variables ---
-    theking_cmd = "workflowctl"
-    workflow_root = "."
-    workflow_root_quoted = shlex.quote(workflow_root)
-    project_dir_hint = "."
-    project_dir_quoted = shlex.quote(project_dir_hint)
-    demo_task_dir_quoted = shlex.quote(
-        (
-            PurePosixPath(THEKING_DIRNAME)
-            / "workflows"
-            / project_slug
-            / "sprints"
-            / "sprint-001-foundation"
-            / "tasks"
-            / "TASK-001-demo"
-        ).as_posix()
-    )
-    tmpl_vars = dict(
-        project_slug=project_slug,
-        project_title=humanize_slug(project_slug),
-        theking_cmd=theking_cmd,
-        workflow_root=workflow_root,
-        workflow_root_quoted=workflow_root_quoted,
-        project_dir=project_dir_hint,
-        project_dir_quoted=project_dir_quoted,
-        demo_task_dir_quoted=demo_task_dir_quoted,
-    )
+    tmpl_vars = build_runtime_template_vars(project_slug)
 
     write_if_missing(
         theking_dir / "README.md",
@@ -1670,6 +1870,148 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
             "prompts": prompts_dir,
         },
     )
+
+    sync_runtime_manifest_baseline(project_dir, project_slug)
+
+
+def handle_upgrade(args: argparse.Namespace) -> None:
+    _workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
+
+    ensure_theking_scaffold(project_dir, project_slug)
+
+    artifacts = collect_managed_runtime_artifacts(project_dir, project_slug)
+    manifest = load_runtime_manifest(project_dir)
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    force = bool(getattr(args, "force", False))
+    adopt = bool(getattr(args, "adopt", False))
+
+    if adopt and force:
+        raise WorkflowError("--adopt and --force are mutually exclusive.")
+
+    backup_dir: Path | None = None
+    statuses: dict[str, list[str]] = {
+        "created": [],
+        "current": [],
+        "upgraded": [],
+        "adopted": [],
+        "drift": [],
+        "forced": [],
+    }
+
+    def _backup(relative_key: str, absolute_path: Path) -> None:
+        nonlocal backup_dir
+        if backup_dir is None:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            backup_dir = project_dir / RUNTIME_BACKUP_ROOT_RELATIVE / timestamp
+        target = backup_dir / relative_key
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(absolute_path, target)
+
+    manifest_updates: dict[str, str] = dict(manifest)
+    manifest_removals: set[str] = set()
+
+    for absolute_path, rendered in artifacts:
+        key = _manifest_key(project_dir, absolute_path)
+        template_hash = _sha256_text(rendered)
+        tracked_hash = manifest.get(key)
+
+        if not absolute_path.exists():
+            if dry_run:
+                statuses["created"].append(key)
+                continue
+            absolute_path.parent.mkdir(parents=True, exist_ok=True)
+            absolute_path.write_text(rendered, encoding="utf-8")
+            manifest_updates[key] = template_hash
+            statuses["created"].append(key)
+            continue
+
+        try:
+            on_disk = absolute_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            statuses["drift"].append(key)
+            continue
+        on_disk_hash = _sha256_text(on_disk)
+
+        if on_disk_hash == template_hash:
+            if tracked_hash != template_hash:
+                manifest_updates[key] = template_hash
+            statuses["current"].append(key)
+            continue
+
+        if adopt:
+            if dry_run:
+                statuses["adopted"].append(key)
+                continue
+            manifest_updates[key] = on_disk_hash
+            statuses["adopted"].append(key)
+            continue
+
+        if tracked_hash is not None and tracked_hash == on_disk_hash:
+            # Safe upgrade: last-known theking-owned content, user did not touch it.
+            if dry_run:
+                statuses["upgraded"].append(key)
+                continue
+            absolute_path.write_text(rendered, encoding="utf-8")
+            manifest_updates[key] = template_hash
+            statuses["upgraded"].append(key)
+            continue
+
+        # Drift: on-disk content differs from both template and manifest.
+        if force:
+            if dry_run:
+                statuses["forced"].append(key)
+                continue
+            _backup(key, absolute_path)
+            absolute_path.write_text(rendered, encoding="utf-8")
+            manifest_updates[key] = template_hash
+            statuses["forced"].append(key)
+            continue
+
+        statuses["drift"].append(key)
+
+    if not dry_run and manifest_updates != manifest:
+        # Prune entries we removed explicitly (none yet in this flow) and save.
+        for stale in manifest_removals:
+            manifest_updates.pop(stale, None)
+        save_runtime_manifest(project_dir, manifest_updates)
+
+    def _emit(label: str, entries: list[str]) -> None:
+        if not entries:
+            return
+        print(f"{label} ({len(entries)}):")
+        for entry in entries:
+            print(f"  - {entry}")
+
+    order = ["created", "upgraded", "adopted", "forced", "drift", "current"]
+    labels = {
+        "created": "Created",
+        "upgraded": "Upgraded",
+        "adopted": "Adopted (manifest baselined to on-disk)",
+        "forced": "Force-upgraded (backups saved)",
+        "drift": "Drift — left untouched (use --force to overwrite with backup, or --adopt to keep)",
+        "current": "Current",
+    }
+
+    header = "Upgrade plan (dry run)" if dry_run else "Upgrade result"
+    print(header)
+    for key in order:
+        _emit(labels[key], statuses[key])
+
+    if backup_dir is not None:
+        print(f"Backups: {backup_dir.relative_to(project_dir).as_posix()}")
+
+    if statuses["drift"] and not force and not adopt:
+        print(
+            "Some files drifted from their tracked template content. "
+            "Review the diff, then re-run with --force to overwrite "
+            "(the old version is backed up) or --adopt to keep your edits.",
+            file=sys.stderr,
+        )
 
 
 def merge_runtime_settings(settings_path: Path, template_content: str) -> None:

@@ -88,6 +88,34 @@ workflowctl check --task-dir .theking/workflows/demo-app/sprints/sprint-001-foun
 
 兼容性说明：推荐长期只记住“在项目根目录运行时传 `--project-dir .`”。`--project-dir` 要求项目目录名和 `--project-slug` 精确一致；如果你的目录名和 slug 不一致，继续使用 `--root <项目父目录> --project-slug <slug>`。如果你手上只有 `.theking` 路径，传 `--project-dir .theking` 即可。
 
+## 升级已初始化项目
+
+theking 本身升级后（例如模板更新、agent 说明变更、hooks 调整），用 `workflowctl upgrade` 把目标项目里的 runtime 文件同步到新版本。manifest 放在 `.theking/.manifests/runtime.json`，按 sha256 指纹区分“用户改过”和“theking 自己写过的内容”，不会盲目覆盖用户编辑。
+
+```bash
+# 先预览：看哪些 runtime 文件会被刷新、哪些出现 drift
+workflowctl upgrade --project-dir . --project-slug demo-app --dry-run
+
+# 确认没问题后执行
+workflowctl upgrade --project-dir . --project-slug demo-app
+
+# 用户手改过的文件默认会被标为 drift 并原样保留；两种处理方式：
+#   --force   覆盖，并把原文件备份到 .theking/.backups/<时间戳>/
+#   --adopt   保留用户改动，把当前内容当作新的 baseline 写回 manifest
+workflowctl upgrade --project-dir . --project-slug demo-app --force
+workflowctl upgrade --project-dir . --project-slug demo-app --adopt
+```
+
+管辖范围只包含完全由模板生成的 canonical source（`.theking/agents/*.md`、`.theking/commands/*.md`、`.theking/skills/*/SKILL.md`、`.theking/hooks/*.js`、`.theking/prompts/*.prompt.md`、以及 `.theking/README.md`、`.theking/bootstrap.md`、`.theking/context/architecture.md`、`.theking/context/dev-workflow.md`、`.theking/agents/README.md`、`.theking/agents/catalog.md`、`.theking/verification/README.md`）。
+
+以下文件由用户维护，`upgrade` 不会动：
+
+- `.theking/context/project-overview.md`
+- `.theking/memory/MEMORY.md`
+- 根目录 `CLAUDE.md`、`CODEBUDDY.md`、`AGENTS.md`（`ensure` 已负责 append 而非覆盖）
+
+`.claude/`、`.codebuddy/`、`.github/` 下的投影目录不受 manifest 管辖——它们本来就在每次 `ensure`（也就是 `upgrade` 第一步）里从 canonical source 全量重建。
+
 ## 工作流底线
 
 - 先做上下文初勘，再决定完整流程还是轻量流程。至少查看相关代码、测试、文档、报错或接口契约中的直接证据。
