@@ -107,9 +107,9 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert "light流程只减少规划开销" not in governance_skill
     assert "轻量流程只减少规划开销，不降低交付标准" in governance_skill
     assert "build/lint/type/unit + 画像验证" in governance_skill
-    assert "Phase 1: 审上下文" in decree_command
-    assert decree_command.index("Phase 1: 审上下文") < decree_command.index("Phase 2: 审旨")
-    assert "禁止在完成最小上下文初勘前宣告“轻量流程”" in decree_command
+    assert "Phase 1: 察情" in decree_command
+    assert decree_command.index("Phase 1: 察情") < decree_command.index("Phase 2: 议旨")
+    assert "未察案牍、未勘波及，不得擅宣「轻量流程」" in decree_command
     assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in decree_command
     assert "Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须保留" in decree_command
     assert "build/lint/type/unit checks" in decree_command
