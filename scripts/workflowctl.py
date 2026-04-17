@@ -15,6 +15,7 @@ try:
     from .constants import (
         EXECUTION_PROFILE_DIRS,
         TASK_ID_PATTERN,
+        TERMINAL_STATUSES,
         THEKING_DIRNAME,
         WorkflowError,
     )
@@ -63,6 +64,7 @@ except ImportError:
     from constants import (
         EXECUTION_PROFILE_DIRS,
         TASK_ID_PATTERN,
+        TERMINAL_STATUSES,
         THEKING_DIRNAME,
         WorkflowError,
     )
@@ -271,6 +273,11 @@ def build_parser() -> argparse.ArgumentParser:
         example="workflowctl deactivate --project-dir .",
     )
     deactivate.add_argument("--project-dir", required=True, help=DEACTIVATE_PROJECT_DIR_ARGUMENT_HELP)
+    deactivate.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow deactivating even if active task has not reached a terminal status (done/blocked).",
+    )
     deactivate.set_defaults(handler=handle_deactivate)
 
     ensure = add_command_parser(
@@ -745,7 +752,27 @@ def handle_deactivate(args: argparse.Namespace) -> None:
     theking_dir = project_dir / THEKING_DIRNAME
     active_task_file = theking_dir / "active-task"
     ensure_local_path(active_task_file, project_dir, "active-task")
+    force = bool(getattr(args, "force", False))
     if active_task_file.exists():
+        if not force:
+            task_path_text = active_task_file.read_text(encoding="utf-8").strip()
+            if task_path_text:
+                task_dir = Path(task_path_text)
+                task_md = task_dir / "task.md"
+                if task_md.is_file():
+                    try:
+                        task_data, _body = load_task_document(task_md)
+                        current_status = stringify(task_data.get("status", ""))
+                    except Exception:
+                        current_status = ""
+                    if current_status and current_status not in TERMINAL_STATUSES:
+                        task_id = stringify(task_data.get("id", task_dir.name))
+                        raise WorkflowError(
+                            f"Refusing to deactivate: task {task_id} is still in '{current_status}'. "
+                            f"Advance it to a terminal status (done/blocked) first, e.g. "
+                            f"`workflowctl advance-status --task-dir {task_dir} --to-status <next>`. "
+                            f"Pass --force to override."
+                        )
         active_task_file.unlink()
     print("Deactivated")
 

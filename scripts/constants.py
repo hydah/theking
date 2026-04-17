@@ -27,6 +27,8 @@ ALLOWED_TRANSITIONS = {
     "done": set(),
 }
 
+TERMINAL_STATUSES = {"done", "blocked"}
+
 THEKING_DIRNAME = ".theking"
 SPRINT_NAME_PATTERN = re.compile(r"^sprint-\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$")
 TASK_ID_PATTERN = re.compile(r"^TASK-\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$")

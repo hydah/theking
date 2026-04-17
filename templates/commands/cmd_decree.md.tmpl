@@ -166,7 +166,25 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
    {theking_cmd} check --task-dir <TASK_DIR>
    ```
 
-9. **完成** — status → `done`，但只在 review pair 与 verification evidence 完整后进入完成态
+9. **推进 status（必须逐步推进，不得跳步）**
+
+   每个阶段完成后，立刻推进 status。`workflowctl check` 只校验结构，不会替你推状态；**禁止**让 task 停在 `draft` 就进入下一步：
+
+   ```bash
+   # Spec 完成 → planned
+   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status planned
+   # 测试写完（失败）→ red
+   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status red
+   # 实现通过测试 → green
+   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status green
+   # 进入 review（用 init-review-round，不要用 advance-status）
+   {theking_cmd} init-review-round --task-dir <TASK_DIR>
+   # review 全绿 → ready_to_merge → done
+   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status ready_to_merge
+   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status done
+   ```
+
+   **✅ 终态闸门**：只有 task 为 `done`（或显式 `blocked`）才能进入 Phase 5。`workflowctl deactivate` 会对非终态 task 直接拒绝执行。
 
 ---
 

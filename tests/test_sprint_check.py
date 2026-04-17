@@ -108,6 +108,23 @@ def set_task_status(task_md: Path, *, status: str, history: list[str], current_r
     task_md.write_text(content, encoding="utf-8")
 
 
+def advance_task_to_done(task_dir: Path, cwd: Path) -> None:
+    set_task_status(
+        task_dir / "task.md",
+        status="done",
+        history=[
+            "draft",
+            "planned",
+            "red",
+            "green",
+            "in_review",
+            "ready_to_merge",
+            "done",
+        ],
+        current_review_round=1,
+    )
+
+
 def verification_result_markdown() -> str:
     return "\n".join(
         [
@@ -375,6 +392,7 @@ def test_deactivate_removes_active_task_file(tmp_path: Path) -> None:
 
     run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
     assert (project_dir / ".theking" / "active-task").is_file()
+    advance_task_to_done(task_dir, tmp_path)
 
     result = run_cli(
         ["deactivate", "--project-dir", str(project_dir)],
@@ -392,6 +410,7 @@ def test_deactivate_accepts_theking_dir_as_project_dir(tmp_path: Path) -> None:
 
     run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
     assert (project_dir / ".theking" / "active-task").is_file()
+    advance_task_to_done(task_dir, tmp_path)
 
     result = run_cli(
         ["deactivate", "--project-dir", str(project_dir / ".theking")],
@@ -430,6 +449,64 @@ def test_deactivate_is_idempotent(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_deactivate_refuses_when_active_task_is_not_terminal(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    project_dir = tmp_path / "demo-app"
+
+    run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
+    assert (project_dir / ".theking" / "active-task").is_file()
+
+    result = run_cli(
+        ["deactivate", "--project-dir", str(project_dir)],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "Refusing to deactivate" in result.stderr
+    assert "draft" in result.stderr
+    assert "--force" in result.stderr
+    assert (project_dir / ".theking" / "active-task").is_file()
+
+
+def test_deactivate_allows_force_override_for_non_terminal_task(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    project_dir = tmp_path / "demo-app"
+
+    run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    result = run_cli(
+        ["deactivate", "--project-dir", str(project_dir), "--force"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (project_dir / ".theking" / "active-task").exists()
+
+
+def test_deactivate_allows_blocked_task_without_force(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    project_dir = tmp_path / "demo-app"
+
+    run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
+    set_task_status(
+        task_dir / "task.md",
+        status="blocked",
+        history=["draft", "planned", "blocked"],
+        current_review_round=0,
+    )
+
+    result = run_cli(
+        ["deactivate", "--project-dir", str(project_dir)],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (project_dir / ".theking" / "active-task").exists()
 
 
 def test_deactivate_rejects_symlinked_theking_directory_outside_project(tmp_path: Path) -> None:
