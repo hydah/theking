@@ -4,7 +4,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
 
 
@@ -96,7 +95,7 @@ def test_rewriter_unit_behavior() -> None:
     scripts_dir = str(SCRIPT_PATH.parent)
     if scripts_dir not in _sys.path:
         _sys.path.insert(0, scripts_dir)
-    module = importlib.import_module("workflowctl")
+    module = importlib.import_module("scaffold")
     rewrite = module.rewrite_agent_frontmatter_for_codebuddy
 
     sample = (
