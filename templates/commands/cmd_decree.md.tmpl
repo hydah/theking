@@ -122,9 +122,8 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 **⛔ 门禁自检 — 进入 Phase 4 前必须全部为真：**
 - [ ] `{theking_cmd} ensure` 已执行
 - [ ] `init-sprint` + `init-task`（或 `init-sprint-plan`）已执行，task 目录已存在
-- [ ] `{theking_cmd} activate --task-dir <TASK_DIR>` 已执行
-- [ ] `spec.md` 已填写全部 section（Scope / Non-Goals / Acceptance / Test Plan / Edge Cases）
-- [ ] task status 已推进到 `planned`
+
+（`activate` / `spec.md` 填写 / `advance-status planned` 由 Phase 4 步骤 1-2 的子门禁管辖，不在此重复。）
 
 **如果上述任何一条为假，禁止调用文件编辑工具（`replace_in_file` / `write_to_file` / `Edit` / `Write` 等）修改源代码文件（.go / .ts / .tsx / .js / .jsx / .py / .rs / .java / .css / .html 等）。**
 
@@ -140,76 +139,154 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 
 ### Phase 4: 领旨 — 开发
 
-按依赖图拓扑排序，无依赖的 task **并行启动**（轻量流程只有 1 个 task）。
+按依赖图拓扑排序，无依赖的 task **并行启动**（轻量流程只有 1 个 task）。**每个 task 严格走以下主干流程**，状态推进内嵌在每个步骤末尾（`workflowctl check` 只校验结构，不替你推状态）。
 
-对每个 task：
+#### 主干流程（必做，顺序不可跳）
 
-1. **激活**
-   ```bash
-   {theking_cmd} activate --task-dir <TASK_DIR>
-   ```
+**1. 激活**
+```bash
+{theking_cmd} activate --task-dir <TASK_DIR>
+```
 
-2. **写 Spec**
-   - 完整流程与轻量流程都使用同一模板
-   - Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 全部 section 都必须保留
-   - 轻量流程可以短写，但不得留空、不得省略章节
+**2. 写 Spec**
+- 完整流程与轻量流程使用同一模板；Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须保留
+- 轻量流程可以短写，但不得留空、不得省略章节
+- 写完后立即：`{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status planned`
 
-3. **TDD 循环** — 召 **门下侍中**（tdd-guide）封驳审核：先写测试 → 最小实现 → 重构
+> **⛔ spec→TDD 子门禁 — 必须全部为真才能进入步骤 3：**
+> - [ ] spec.md 所有 section 已填写（不是模板 placeholder）
+> - [ ] task status 已推到 `planned`
+>
+> **若未达成，禁止调用文件编辑工具修改源代码文件。**
 
-4. **基础验证** — 在进入 review 前，必须运行与改动相关的 build/lint/type/unit checks，并补齐执行画像要求的验证：
-   - `web.browser`：至少做一次真实页面 smoke 或轻量 e2e
-   - `backend.http`：至少做一次真实请求或集成式验证
-   - `backend.cli` / `backend.job`：至少执行真实入口并核对输出或副作用
-   - 将命令、结果、截图/日志等证据写入 `verification/<profile>/`
+**3. TDD Red — 先写测试**
+- 召 **门下侍中**（tdd-guide）封驳审核
+- 写一个或一组最小能暴露缺陷的测试，运行应当**失败**（证明测试有效）
+- 测试失败后：`{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status red`
 
-5. **Review** — 按 workflow-governance agent 触发规则：
-   - **御史大夫**（code-reviewer）— 必须
-   - **刑部尚书**（security-reviewer）— auth/input/api 或 backend.http 时
-   - **兵部尚书**（e2e-runner）— web.browser 时
-   - 有 CRITICAL/HIGH findings → 修复 → 再 review
+**4. TDD Green — 最小实现**
+- 用**最小**实现让步骤 3 的测试通过，不扩大范围
+- 测试通过后：`{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status green`
 
-6. **构建失败** → 召 **工部尚书**（build-error-resolver）排障修复
+**5. 基础验证 + 画像验证**
 
-7. **性能问题** → 召 **户部尚书**（perf-optimizer）度支钱粮
+运行与改动相关的 build/lint/type/unit checks，并补齐执行画像要求的验证：
+- `web.browser`：至少做一次真实页面 smoke 或轻量 e2e
+- `backend.http`：至少做一次真实请求或集成式验证
+- `backend.cli` / `backend.job`：至少执行真实入口并核对输出或副作用
+- 将命令、结果、截图/日志等证据写入 `verification/<profile>/`
 
-8. **校验**
-   ```bash
-   {theking_cmd} check --task-dir <TASK_DIR>
-   ```
+**6. 提交（Commit）**
+- 按有意义粒度 commit：典型为 `spec + red 测试` 一次、`green 实现` 一次、（可选）`重构` 一次
+- **禁止**整个 task 一锅端提交；**禁止**`WIP` 粒度碎 commit
 
-9. **推进 status（必须逐步推进，不得跳步）**
+**7. Review**
+```bash
+{theking_cmd} init-review-round --task-dir <TASK_DIR>
+```
+- 召 **御史大夫**（code-reviewer）— 必须
+- 召 **刑部尚书**（security-reviewer）— auth/input/api 或 backend.http 时
+- 召 **兵部尚书**（e2e-runner）— web.browser 时
+- **有 CRITICAL/HIGH findings → 走【Review 回炉分支】，不要在当前轮次里直接改代码后标 resolved**
+- **全部已解决 → 产出 `round-NNN.resolved.md`（含 `## Fixes` + `## Verification`）**
 
-   每个阶段完成后，立刻推进 status。`workflowctl check` 只校验结构，不会替你推状态；**禁止**让 task 停在 `draft` 就进入下一步：
+**8. 终态校验**
+```bash
+{theking_cmd} check --task-dir <TASK_DIR>
+{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status ready_to_merge
+{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status done
+```
 
-   ```bash
-   # Spec 完成 → planned
-   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status planned
-   # 测试写完（失败）→ red
-   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status red
-   # 实现通过测试 → green
-   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status green
-   # 进入 review（用 init-review-round，不要用 advance-status）
-   {theking_cmd} init-review-round --task-dir <TASK_DIR>
-   # review 全绿 → ready_to_merge → done
-   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status ready_to_merge
-   {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status done
-   ```
+**✅ 终态闸门**：只有 task 为 `done`（或显式 `blocked`）才能进入 Phase 5。`workflowctl deactivate` 会对非终态 task 直接拒绝执行。
 
-   **✅ 终态闸门**：只有 task 为 `done`（或显式 `blocked`）才能进入 Phase 5。`workflowctl deactivate` 会对非终态 task 直接拒绝执行。
+---
+
+#### Review 回炉分支（review 发现 CRITICAL/HIGH 时必走）
+
+```
+a. {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status changes_requested
+b. 回步骤 3：若需要新增/修改测试，先让测试重新变红
+c. 回步骤 4：修实现让测试重新变绿
+d. 回步骤 5：重跑基础验证 + 画像验证
+e. 回步骤 6：以 fixup commit 落盘
+f. 产出 round-NNN.resolved.md（含 ## Fixes + ## Verification）
+g. 若还有未解决 findings → 再开一轮 init-review-round；否则回到步骤 8
+```
+
+**⛔ 禁止**：在 review 轮次里直接改代码后把状态从 `in_review` 跳回 `in_review` 并标 resolved，**必须经过 `changes_requested` → `red`/`green`**。
+
+#### 其他异常分支
+
+- **构建 / 类型 / lint 失败** → 召 **工部尚书**（build-error-resolver）→ 回步骤 5 重新验证
+- **性能瓶颈** → 召 **户部尚书**（perf-optimizer）→ 先在步骤 3 补性能测试（red），再回步骤 4
 
 ---
 
 ### Phase 5: 收旨 — 收尾
 
-1. Sprint 级校验：
-   ```bash
-   {theking_cmd} sprint-check --sprint-dir <SPRINT_DIR>
-   ```
-2. 完整流程：召 **吏部尚书**（refactor-cleaner）裁汰冗余代码
-3. 知识提炼 — 有复用价值的分析产物提炼到 `.theking/context/`
-4. 完整流程：召 **礼部尚书**（doc-updater）修史编典
-5. 停用：
-   ```bash
-   {theking_cmd} deactivate --project-dir {project_dir_quoted}
-   ```
-6. 汇报旨意执行结果
+**⛔ 入 Phase 5 门禁**：本 sprint 所有 task 必须是 `done`（或显式 `blocked` 并记录原因）。有任一 task 仍在 `red`/`green`/`in_review` 等中间态，**禁止**进入 Phase 5。
+
+#### 1. Sprint artifact 校验
+
+```bash
+{theking_cmd} sprint-check --sprint-dir <SPRINT_DIR>
+```
+
+#### 2. Sprint 级全量回归验证（必做，不可省）
+
+每个 task 独立验证 ≠ 合起来没问题。多 task 合并后必须再整体跑一次：
+
+- 完整 **build**（所有受影响模块，不是单 task 的局部 build）
+- 完整 **lint + type-check**
+- 完整 **unit + integration 测试套件**
+- 失败 → 定位到具体 task，**回到 Phase 4 对应 task** 修复（状态机从 `done` 回退到 `red`/`green` 必须显式推进），修完回到本步重跑
+
+将全量回归的命令与结果证据写入 `sprint-dir/verification/regression.md`。
+
+#### 3. Sprint 级画像验证（按需，依 sprint 涉及画像触发）
+
+- sprint 涉及 `web.browser` → 召 **兵部尚书**（e2e-runner）跑一次**跨 task 的端到端场景**（不只是单 task smoke）
+- sprint 涉及 `backend.http` → 跑一次关键集成链路（多服务协同、真实依赖）
+- sprint 涉及 `backend.cli` / `backend.job` → 按关键 pipeline 实跑一次
+- 证据写入 `sprint-dir/verification/<profile>/`
+
+#### 4. 代码清理（完整流程必做，轻量流程按需）
+
+召 **吏部尚书**（refactor-cleaner）裁汰冗余代码。**注意：refactor-cleaner 会修改源代码，必须走完整验证闭环，不能跳过 review。**
+
+```
+a. refactor-cleaner 产出删除/重构清单（dead code、重复、过时抽象）
+b. 应用改动
+c. 再次执行步骤 2（完整 build + test），确认没有误删被动态引用的代码
+d. 召 code-reviewer 审查清单，重点：反射 / 动态 import / 配置字符串引用 / 外部 API 兼容
+e. 有 CRITICAL/HIGH → 回滚或补修；全绿 → 以独立 commit 落盘
+```
+
+**⛔ 禁止**：把 refactor-cleaner 的改动直接 commit，不跑 build+test+review。
+
+#### 5. 知识提炼
+
+有复用价值的分析产物提炼到 `.theking/context/`（架构决策、踩坑记录、可复用模式）。
+
+#### 6. 文档更新（完整流程必做，轻量流程按需）
+
+召 **礼部尚书**（doc-updater）更新 README / ARCHITECTURE / CHANGELOG / CLAUDE.md 等。
+
+```
+a. doc-updater 产出文档变更
+b. 召 code-reviewer 做【文档专项轻审】，重点：
+   - 文档与实际代码是否一致（接口签名、配置项、命令、默认值）
+   - 是否引入过时信息或矛盾
+   - 示例代码是否能跑
+c. 不一致 → 回炉重写；一致 → commit
+```
+
+#### 7. 停用
+
+```bash
+{theking_cmd} deactivate --project-dir {project_dir_quoted}
+```
+
+#### 8. 汇报旨意执行结果
+
+总结本次交付：完成的 task 列表、全量回归结果、知识沉淀指针、遗留 blocked 项。

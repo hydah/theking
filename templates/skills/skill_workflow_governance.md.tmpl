@@ -24,15 +24,19 @@ description: |
 7. **没有 review pair 不进入 done** — `review/code-review-round-NNN.md` + `.resolved.md` 必须完整。
 8. **compact/换工具先跑 `{theking_cmd} status`** — 恢复状态，不要重新发起。
 
-**自检清单 — 在每个 Phase 转换时强制过一遍：**
+**自检清单 — 在每个 Phase / 步骤转换时强制过一遍：**
 
 ```
 Phase 1 → 2: 是否已输出初勘结果（已查看/影响面/风险标签）？
 Phase 2 → 3: 是否已运行 {theking_cmd} ensure + init-sprint + init-task？
-Phase 3 → 4: task.md 存在吗？spec.md 填完了吗？status 是 planned 了吗？
-Phase 4 实现中: 是否先召了 tdd-guide？是否测试先于实现？
-Phase 4 → review: build/test 通过了吗？
-review → done: review pair 完整吗？{theking_cmd} check 通过了吗？
+Phase 3 → 4: task 目录已创建？（activate / spec / planned 在 Phase 4 子门禁里把关）
+Phase 4 步骤 2 → 3（spec→TDD）: spec 全部 section 填完？status=planned？
+Phase 4 步骤 3（Red）: 测试先写？运行失败（= 有效的 red）？
+Phase 4 步骤 4（Green）: 最小实现？测试通过？status 推到 green？
+Phase 4 步骤 5 → 7（verification→review）: build/test + 画像验证都有证据？
+Phase 4 review → done: review pair 完整？check 通过？status 到 done？
+Phase 4 → Phase 5: 所有 task 都是 done 或显式 blocked？
+Phase 5 内: sprint 级全量回归过了？refactor-cleaner 改动后的 build+test+review 都过了？
 ```
 
 ---
@@ -145,18 +149,16 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 1. **上下文初勘** — 搜代码、测试、文档、报错，确认影响面与风险
 2. **Bootstrap** — `workflowctl ensure`（幂等）
 3. **规划 Sprint** — `init-sprint` + `init-sprint-plan`（planner 拆解，批量创建 task）
-4. **逐个 Task**：激活 → 写完整 spec → TDD → build/lint/type/unit + 画像验证 → review → `check` → done
-5. **Sprint 校验** — `sprint-check`
-6. **收尾** — 知识提炼 + `deactivate`
+4. **逐个 Task**：activate → 写完整 spec（→ planned）→ TDD red（→ red）→ TDD green（→ green）→ build/lint/type/unit + 画像验证 → commit → review（回炉走 changes_requested → red/green）→ check → ready_to_merge → done
+5. **Sprint 收尾**：sprint-check → **sprint 级全量回归（build + test 整体重跑）** → 按需 sprint 级画像验证 → refactor-cleaner（改动后再跑 build+test+code-review）→ 知识提炼 → doc-updater（+ 文档专项轻审）→ deactivate
 
 ### 轻量流程
 
 1. **上下文初勘** — 先确认这真的是单一变更单元，而不是表面轻量
 2. **Bootstrap** — `workflowctl ensure`（幂等）
 3. **创建单 Task Sprint** — `init-sprint` + `init-task`（跳过 planner）
-4. **激活** → 写完整 spec 模板（可短写，不可缺节） → TDD → build/lint/type/unit + 画像验证 → review → `check` → done
-5. **Sprint 校验** — `sprint-check`
-6. **停用** — `deactivate`
+4. **Task 执行**：activate → 写完整 spec 模板（可短写，不可缺节）→ TDD red/green → build/lint/type/unit + 画像验证 → commit → review → check → done
+5. **Sprint 收尾**：sprint-check → **sprint 级全量回归**（即便只有 1 个 task，也要跑整体 build+test 防止跨模块副作用）→ 按需知识提炼 → deactivate
 
 ### workflowctl 命令参考
 

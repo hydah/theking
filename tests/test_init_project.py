@@ -111,7 +111,7 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert decree_command.index("Phase 1: 审上下文") < decree_command.index("Phase 2: 审旨")
     assert "禁止在完成最小上下文初勘前宣告“轻量流程”" in decree_command
     assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in decree_command
-    assert "Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 全部 section 都必须保留" in decree_command
+    assert "Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须保留" in decree_command
     assert "build/lint/type/unit checks" in decree_command
     assert ".theking/skills/workflow-governance/SKILL.md" in decree_command
     assert "开发工作流底线" in bootstrap_doc
