@@ -97,17 +97,17 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 
 ### workflowctl 命令参考
 
-以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。
+以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。优先把 `--project-dir` 传项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可。
 
 ```bash
 # 初始化项目
-{theking_cmd} ensure --root {workflow_root_quoted} --project-slug {project_slug}
+{theking_cmd} ensure --project-dir {workflow_root_quoted} --project-slug {project_slug}
 
 # 创建 sprint
-{theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme <THEME>
+{theking_cmd} init-sprint --project-dir {workflow_root_quoted} --project-slug {project_slug} --theme <THEME>
 
 # 批量创建 task（推荐）
-{theking_cmd} init-sprint-plan --root {workflow_root_quoted} --project-slug {project_slug} --sprint <SPRINT> --plan-file plan.json
+{theking_cmd} init-sprint-plan --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint <SPRINT> --plan-file plan.json
 
 # 激活 / 停用 task
 {theking_cmd} activate --task-dir <TASK_DIR>

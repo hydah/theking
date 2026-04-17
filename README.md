@@ -51,19 +51,49 @@ skills/theking/
     └── test_check_rules.py
 ```
 
-## 命令
+## 安装
 
-在 skill 目录下执行：
+推荐把 `workflowctl` 当成独立 CLI 安装，不要依赖系统自带的旧版 `pip` 或旧版 Python。
 
 ```bash
-python3 scripts/workflowctl.py init-project --root /tmp/workflows --project-slug demo-app
-python3 scripts/workflowctl.py init-sprint --root /tmp/workflows --project-slug demo-app --theme foundation
-python3 scripts/workflowctl.py init-task --root /tmp/workflows --project-slug demo-app --sprint sprint-001-foundation --slug login-flow --title "Login Flow" --task-type auth --execution-profile backend.http
-python3 scripts/workflowctl.py advance-status --task-dir /tmp/workflows/demo-app/.theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status planned
-python3 scripts/workflowctl.py advance-status --task-dir /tmp/workflows/demo-app/.theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status red
-python3 scripts/workflowctl.py advance-status --task-dir /tmp/workflows/demo-app/.theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status green
-python3 scripts/workflowctl.py init-review-round --task-dir /tmp/workflows/demo-app/.theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow
-python3 scripts/workflowctl.py check --task-dir /tmp/workflows/demo-app/.theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow
+pipx install /path/to/theking
+# 或
+uv tool install /path/to/theking
+```
+
+如果你只是想一次性试跑，不想先安装到 PATH：
+
+```bash
+uv tool run --from /path/to/theking workflowctl --help
+```
+
+要求：Python >= 3.10。
+
+## Quickstart
+
+在目标项目根目录执行，优先把 `--project-dir` 传当前项目根目录 `.`：
+
+```bash
+cd /tmp/demo-app
+workflowctl ensure --project-dir . --project-slug demo-app
+workflowctl init-sprint --project-dir . --project-slug demo-app --theme foundation
+workflowctl init-task --project-dir . --project-slug demo-app --sprint sprint-001-foundation --slug login-flow --title "Login Flow" --task-type auth --execution-profile backend.http
+workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status planned
+workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status red
+workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status green
+workflowctl init-review-round --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow
+workflowctl check --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow
+```
+
+兼容性说明：推荐长期只记住“在项目根目录运行时传 `--project-dir .`”。`--project-dir` 要求项目目录名和 `--project-slug` 精确一致；如果你的目录名和 slug 不一致，继续使用 `--root <项目父目录> --project-slug <slug>`。如果你手上只有 `.theking` 路径，传 `--project-dir .theking` 即可。
+
+## 开发这个仓库
+
+仓库开发和测试建议直接用 `uv`：
+
+```bash
+uv run workflowctl --help
+uv run --with pytest pytest tests -q
 ```
 
 生成到目标项目中的运行时文档和 prompt 不会写死本机绝对路径；它们统一假设你在项目根目录，通过已安装的 `workflowctl` 命令执行治理操作。

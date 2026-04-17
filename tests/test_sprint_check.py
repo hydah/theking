@@ -357,6 +357,41 @@ def test_deactivate_removes_active_task_file(tmp_path: Path) -> None:
     assert not (project_dir / ".theking" / "active-task").exists()
 
 
+def test_deactivate_accepts_theking_dir_as_project_dir(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    project_dir = tmp_path / "demo-app"
+
+    run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
+    assert (project_dir / ".theking" / "active-task").is_file()
+
+    result = run_cli(
+        ["deactivate", "--project-dir", str(project_dir / ".theking")],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (project_dir / ".theking" / "active-task").exists()
+
+
+def test_deactivate_rejects_symlinked_theking_dir_passed_to_project_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir(parents=True)
+    external_theking = tmp_path / "external-theking"
+    external_theking.mkdir(parents=True)
+    (external_theking / "active-task").write_text("/tmp/task\n", encoding="utf-8")
+    (project_dir / ".theking").symlink_to(external_theking, target_is_directory=True)
+
+    result = run_cli(
+        ["deactivate", "--project-dir", str(project_dir / ".theking")],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "stay under" in result.stderr or "symlink" in result.stderr
+    assert (external_theking / "active-task").read_text(encoding="utf-8") == "/tmp/task\n"
+
+
 def test_deactivate_is_idempotent(tmp_path: Path) -> None:
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     project_dir = tmp_path / "demo-app"

@@ -34,6 +34,24 @@ def test_workflowctl_console_script_help_runs() -> None:
     assert "ensure" in result.stdout
     assert "advance-status" in result.stdout
     assert "init-review-round" in result.stdout
+    assert "pipx install /path/to/theking" in result.stdout
+    assert "project-dir" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["ensure", "init-project", "init-sprint", "init-task", "init-sprint-plan", "deactivate"],
+)
+def test_workflowctl_root_command_help_mentions_project_root_and_theking_compatibility(command: str) -> None:
+    result = run_console_cli([command, "--help"])
+
+    assert result.returncode == 0, result.stderr
+    assert "project-dir" in result.stdout
+    assert ".theking" in result.stdout
+    if command != "deactivate":
+        assert "--root" in result.stdout
+    else:
+        assert "--project-slug" not in result.stdout
 
 
 def test_workflowctl_console_script_can_ensure_project(tmp_path: Path) -> None:
@@ -173,3 +191,4 @@ def test_workflowctl_built_wheel_exports_entrypoint_and_runs_help(tmp_path: Path
     assert help_result.returncode == 0, help_result.stderr
     assert "init-project" in help_result.stdout
     assert "ensure" in help_result.stdout
+    assert "project-dir" in help_result.stdout

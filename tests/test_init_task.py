@@ -151,6 +151,45 @@ def test_init_task_creates_minimal_task_tree_and_required_fields(tmp_path: Path)
     assert "## Test Plan" in spec_text
 
 
+def test_init_task_accepts_project_root_as_project_dir(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    project_dir = tmp_path / "demo-app"
+
+    result = run_cli(
+        [
+            "init-task",
+            "--project-dir",
+            str(project_dir),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--slug",
+            "login-flow",
+            "--title",
+            "Login Flow",
+            "--task-type",
+            "auth",
+            "--execution-profile",
+            "backend.http",
+        ],
+        cwd=project_dir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        project_dir
+        / ".theking"
+        / "workflows"
+        / "demo-app"
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-login-flow"
+        / "task.md"
+    ).is_file()
+
+
 def test_init_task_rejects_sprint_path_escape(tmp_path: Path) -> None:
     bootstrap_sprint(tmp_path)
     escape_dir = workflow_root(tmp_path) / "escape"

@@ -92,11 +92,12 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
         assert str(project_dir) not in content
         assert "workflowctl.py" not in content
         assert ".theking/scripts/workflowctl.py" not in content
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-project --root .. --project-slug demo-app" in dev_workflow
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-project --project-dir . --project-slug demo-app" in dev_workflow
     assert f"{PORTABLE_WORKFLOWCTL_CMD} check --task-dir {expected_demo_task}" in dev_workflow
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --root .. --project-slug demo-app" in governance_skill
+    assert "优先把 `--project-dir` 传当前项目根目录 `.`" in dev_workflow
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in governance_skill
     assert f"{PORTABLE_WORKFLOWCTL_CMD} deactivate --project-dir ." in governance_skill
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --root .. --project-slug demo-app --theme <theme>" in decree_command
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --project-dir . --project-slug demo-app --theme <theme>" in decree_command
     assert ".theking/skills/workflow-governance/SKILL.md" in decree_command
     assert not (project_dir / "project.md").exists()
     assert not (project_dir / "sprints").exists()
@@ -120,11 +121,11 @@ def test_init_project_quotes_shell_paths_in_generated_examples(tmp_path: Path) -
     decree_command = (project_dir / ".theking" / "commands" / "decree.md").read_text(encoding="utf-8")
     expected_demo_task = ".theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-demo"
 
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-project --root .. --project-slug demo-app" in dev_workflow
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-project --project-dir . --project-slug demo-app" in dev_workflow
     assert f"{PORTABLE_WORKFLOWCTL_CMD} check --task-dir {expected_demo_task}" in dev_workflow
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --root .. --project-slug demo-app" in governance_skill
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} ensure --project-dir . --project-slug demo-app" in governance_skill
     assert f"{PORTABLE_WORKFLOWCTL_CMD} deactivate --project-dir ." in governance_skill
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --root .. --project-slug demo-app --theme <theme>" in decree_command
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-sprint --project-dir . --project-slug demo-app --theme <theme>" in decree_command
     for content in (dev_workflow, governance_skill, decree_command):
         assert str(root_with_space) not in content
         assert str(project_dir) not in content
@@ -219,6 +220,83 @@ def test_init_sprint_creates_sequential_sprint_directories_under_theking_workflo
     assert second.returncode == 0, second.stderr
     assert (workflow_root(tmp_path) / "sprints" / "sprint-001-foundation" / "sprint.md").is_file()
     assert (workflow_root(tmp_path) / "sprints" / "sprint-002-auth-hardening" / "sprint.md").is_file()
+
+
+def test_init_sprint_accepts_theking_dir_as_project_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir()
+    ensure_result = run_cli(
+        ["ensure", "--project-dir", str(project_dir), "--project-slug", "demo-app"],
+        cwd=project_dir,
+    )
+
+    result = run_cli(
+        [
+            "init-sprint",
+            "--project-dir",
+            str(project_dir / ".theking"),
+            "--project-slug",
+            "demo-app",
+            "--theme",
+            "foundation",
+        ],
+        cwd=project_dir,
+    )
+
+    assert ensure_result.returncode == 0, ensure_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert (project_dir / ".theking" / "workflows" / "demo-app" / "sprints" / "sprint-001-foundation" / "sprint.md").is_file()
+
+
+def test_init_sprint_rejects_theking_dir_passed_to_legacy_root(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir()
+    ensure_result = run_cli(
+        ["ensure", "--project-dir", str(project_dir), "--project-slug", "demo-app"],
+        cwd=project_dir,
+    )
+
+    result = run_cli(
+        [
+            "init-sprint",
+            "--root",
+            str(project_dir / ".theking"),
+            "--project-slug",
+            "demo-app",
+            "--theme",
+            "foundation",
+        ],
+        cwd=project_dir,
+    )
+
+    assert ensure_result.returncode == 0, ensure_result.stderr
+    assert result.returncode != 0
+    assert "--project-dir" in result.stderr
+    assert ".theking" in result.stderr
+
+
+def test_init_sprint_rejects_symlinked_theking_dir_passed_to_project_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir(parents=True)
+    external_theking = tmp_path / "external-theking"
+    external_theking.mkdir(parents=True)
+    (project_dir / ".theking").symlink_to(external_theking, target_is_directory=True)
+
+    result = run_cli(
+        [
+            "init-sprint",
+            "--project-dir",
+            str(project_dir / ".theking"),
+            "--project-slug",
+            "demo-app",
+            "--theme",
+            "foundation",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "stay under" in result.stderr or "symlink" in result.stderr
 
 
 def test_init_sprint_rejects_symlinked_sprints_directory(tmp_path: Path) -> None:
@@ -664,9 +742,78 @@ def test_ensure_creates_scaffold_on_fresh_project(tmp_path: Path) -> None:
     dev_workflow = (project_dir / ".theking" / "context" / "dev-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-project --root .. --project-slug demo-app" in dev_workflow
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} init-project --project-dir . --project-slug demo-app" in dev_workflow
     assert str(SCRIPT_PATH) not in dev_workflow
     assert ".theking/scripts/workflowctl.py" not in dev_workflow
+
+
+def test_ensure_accepts_project_root_as_project_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir()
+
+    result = run_cli(
+        ["ensure", "--project-dir", str(project_dir), "--project-slug", "demo-app"],
+        cwd=project_dir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (project_dir / ".theking" / "workflows" / "demo-app" / "project.md").is_file()
+
+
+def test_ensure_rejects_project_dir_slug_mismatch(tmp_path: Path) -> None:
+    project_dir = tmp_path / "custom-root"
+    project_dir.mkdir()
+
+    result = run_cli(
+        ["ensure", "--project-dir", str(project_dir), "--project-slug", "demo-app"],
+        cwd=project_dir,
+    )
+
+    assert result.returncode != 0
+    assert "basename exactly matches --project-slug" in result.stderr
+    assert "--root <parent-dir>" in result.stderr
+
+
+def test_ensure_rejects_project_dir_when_only_slugified_name_matches(tmp_path: Path) -> None:
+    project_dir = tmp_path / "My App"
+    project_dir.mkdir()
+
+    result = run_cli(
+        ["ensure", "--project-dir", str(project_dir), "--project-slug", "my-app"],
+        cwd=project_dir,
+    )
+
+    assert result.returncode != 0
+    assert "basename exactly matches --project-slug" in result.stderr
+    assert "my-app" in result.stderr
+
+
+def test_ensure_rejects_project_root_passed_to_legacy_root(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir()
+
+    result = run_cli(
+        ["ensure", "--root", str(project_dir), "--project-slug", "demo-app"],
+        cwd=project_dir,
+    )
+
+    assert result.returncode != 0
+    assert "project parent directory, not the project directory itself" in result.stderr
+    assert not (project_dir / "demo-app" / ".theking" / "workflows" / "demo-app" / "project.md").exists()
+
+
+def test_ensure_rejects_slugified_project_root_passed_to_legacy_root(tmp_path: Path) -> None:
+    project_dir = tmp_path / "My App"
+    project_dir.mkdir()
+
+    result = run_cli(
+        ["ensure", "--root", str(project_dir), "--project-slug", "my-app"],
+        cwd=project_dir,
+    )
+
+    assert result.returncode != 0
+    assert "project parent directory, not the project directory itself" in result.stderr
+    assert not (project_dir / "my-app" / ".theking" / "workflows" / "my-app" / "project.md").exists()
 
 
 def test_ensure_is_idempotent(tmp_path: Path) -> None:

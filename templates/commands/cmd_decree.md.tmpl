@@ -8,7 +8,7 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 
 **治理规则与朝廷架构**以 `.theking/skills/workflow-governance/SKILL.md` 为准，本命令只管编排。
 
-以下 `workflowctl` 命令默认在项目根目录执行，并依赖本机已安装的 `workflowctl` 入口。
+以下 `workflowctl` 命令默认在项目根目录执行，并依赖本机已安装的 `workflowctl` 入口。优先把 `--project-dir` 传项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可。
 
 ## Usage
 
@@ -59,8 +59,8 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 3. 确认 task 间依赖关系（DAG）
 4. 创建 sprint + 批量创建 task：
    ```bash
-   {theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
-   {theking_cmd} init-sprint-plan --root {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --plan-file plan.json
+   {theking_cmd} init-sprint --project-dir {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
+   {theking_cmd} init-sprint-plan --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --plan-file plan.json
    ```
 5. 输出 Task Overview 表和依赖图，呈御览
 
@@ -68,8 +68,8 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 
 1. 创建单 task sprint（跳过 planner）：
    ```bash
-   {theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
-   {theking_cmd} init-task --root {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --slug <slug> --title <title> --task-type <type>
+   {theking_cmd} init-sprint --project-dir {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
+   {theking_cmd} init-task --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --slug <slug> --title <title> --task-type <type>
    ```
 
 **✅ 检查点：sprint 和 task 已创建，才能进入 Phase 3。**

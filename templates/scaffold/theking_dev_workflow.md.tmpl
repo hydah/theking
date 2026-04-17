@@ -53,12 +53,12 @@
 
 ## workflowctl
 
-以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。`--root ..` 指向目标项目的父目录，也就是 workflow root：
+以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。优先把 `--project-dir` 传当前项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可：
 
 ```bash
-{theking_cmd} init-project --root {workflow_root_quoted} --project-slug {project_slug}
-{theking_cmd} init-sprint --root {workflow_root_quoted} --project-slug {project_slug} --theme foundation
-{theking_cmd} init-task --root {workflow_root_quoted} --project-slug {project_slug} --sprint sprint-001-foundation --slug demo --title "Demo" --task-type frontend --execution-profile web.browser
+{theking_cmd} init-project --project-dir {workflow_root_quoted} --project-slug {project_slug}
+{theking_cmd} init-sprint --project-dir {workflow_root_quoted} --project-slug {project_slug} --theme foundation
+{theking_cmd} init-task --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint sprint-001-foundation --slug demo --title "Demo" --task-type frontend --execution-profile web.browser
 {theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status planned
 {theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status red
 {theking_cmd} advance-status --task-dir {demo_task_dir_quoted} --to-status green

@@ -116,6 +116,45 @@ def test_init_sprint_plan_creates_all_tasks_with_dependencies(tmp_path: Path) ->
     assert "depends_on:" in auth_task
 
 
+def test_init_sprint_plan_accepts_project_root_as_project_dir(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    project_dir = tmp_path / "demo-app"
+    plan = {
+        "tasks": [
+            {"slug": "task-a", "title": "Task A", "task_type": "general"},
+        ],
+    }
+    plan_file = write_plan(tmp_path, plan)
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--project-dir",
+            str(project_dir),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=project_dir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        project_dir
+        / ".theking"
+        / "workflows"
+        / "demo-app"
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-task-a"
+        / "task.md"
+    ).is_file()
+
+
 def test_init_sprint_plan_rejects_circular_dependencies(tmp_path: Path) -> None:
     bootstrap_sprint(tmp_path)
     plan = {

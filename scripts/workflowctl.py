@@ -104,6 +104,17 @@ except ImportError:
     )
 
 
+PROJECT_DIR_ARGUMENT_HELP = (
+    "Project root or .theking directory. Preferred: run from the project root with --project-dir . "
+    "The project directory basename must exactly match --project-slug."
+)
+DEACTIVATE_PROJECT_DIR_ARGUMENT_HELP = (
+    "Project root or .theking directory for the target project. Pass --project-dir .theking if you only have the workflow path."
+)
+ROOT_ARGUMENT_HELP = "Project parent directory containing <project-slug>. Backward-compatible option."
+PROJECT_SLUG_ARGUMENT_HELP = "Project slug in kebab-case. Usually the project directory name."
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -121,23 +132,57 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="workflowctl")
+    parser = argparse.ArgumentParser(
+        prog="workflowctl",
+        description="Bootstrap and validate theking project workflows.",
+        epilog=(
+            "Install:\n"
+            "  pipx install /path/to/theking\n"
+            "  uv tool install /path/to/theking\n\n"
+            "Quickstart from a project root:\n"
+            "  workflowctl ensure --project-dir . --project-slug my-app\n"
+            "  workflowctl init-sprint --project-dir . --project-slug my-app --theme foundation\n"
+            "  workflowctl init-task --project-dir . --project-slug my-app --sprint sprint-001-foundation --slug demo --title \"Demo\" --task-type tooling\n\n"
+            "Compatibility:\n"
+            "  Legacy scripts can keep using --root <parent-dir> --project-slug my-app.\n"
+            "  If you already have a .theking path, pass it via --project-dir .theking."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init_project = subparsers.add_parser("init-project")
-    init_project.add_argument("--root", required=True)
-    init_project.add_argument("--project-slug", required=True)
+    init_project = add_command_parser(
+        subparsers,
+        "init-project",
+        help_text="Initialize a project's .theking scaffold.",
+        example="workflowctl init-project --project-dir . --project-slug my-app",
+    )
+    add_project_locator_arguments(init_project)
+    add_project_slug_argument(init_project)
     init_project.set_defaults(handler=handle_init_project)
 
-    init_sprint = subparsers.add_parser("init-sprint")
-    init_sprint.add_argument("--root", required=True)
-    init_sprint.add_argument("--project-slug", required=True)
+    init_sprint = add_command_parser(
+        subparsers,
+        "init-sprint",
+        help_text="Create a sprint under an initialized project.",
+        example="workflowctl init-sprint --project-dir . --project-slug my-app --theme foundation",
+    )
+    add_project_locator_arguments(init_sprint)
+    add_project_slug_argument(init_sprint)
     init_sprint.add_argument("--theme", required=True)
     init_sprint.set_defaults(handler=handle_init_sprint)
 
-    init_task = subparsers.add_parser("init-task")
-    init_task.add_argument("--root", required=True)
-    init_task.add_argument("--project-slug", required=True)
+    init_task = add_command_parser(
+        subparsers,
+        "init-task",
+        help_text="Create a task under an initialized sprint.",
+        example=(
+            "workflowctl init-task --project-dir . --project-slug my-app --sprint sprint-001-foundation "
+            "--slug demo --title \"Demo\" --task-type tooling"
+        ),
+    )
+    add_project_locator_arguments(init_task)
+    add_project_slug_argument(init_task)
     init_task.add_argument("--sprint", required=True)
     init_task.add_argument("--slug", required=True)
     init_task.add_argument("--title", required=True)
@@ -145,56 +190,182 @@ def build_parser() -> argparse.ArgumentParser:
     init_task.add_argument("--execution-profile")
     init_task.set_defaults(handler=handle_init_task)
 
-    check = subparsers.add_parser("check")
+    check = add_command_parser(
+        subparsers,
+        "check",
+        help_text="Validate a task directory.",
+        example="workflowctl check --task-dir .theking/workflows/my-app/sprints/sprint-001-foundation/tasks/TASK-001-demo",
+    )
     check.add_argument("--task-dir", required=True)
     check.set_defaults(handler=handle_check)
 
-    advance_status = subparsers.add_parser("advance-status")
+    advance_status = add_command_parser(
+        subparsers,
+        "advance-status",
+        help_text="Advance a task status outside of first-time review entry.",
+        example=(
+            "workflowctl advance-status --task-dir .theking/workflows/my-app/sprints/"
+            "sprint-001-foundation/tasks/TASK-001-demo --to-status green"
+        ),
+    )
     advance_status.add_argument("--task-dir", required=True)
     advance_status.add_argument("--to-status", required=True)
     advance_status.set_defaults(handler=handle_advance_status)
 
-    init_review_round = subparsers.add_parser("init-review-round")
+    init_review_round = add_command_parser(
+        subparsers,
+        "init-review-round",
+        help_text="Enter in_review and scaffold review files for the current round.",
+        example=(
+            "workflowctl init-review-round --task-dir .theking/workflows/my-app/sprints/"
+            "sprint-001-foundation/tasks/TASK-001-demo"
+        ),
+    )
     init_review_round.add_argument("--task-dir", required=True)
     init_review_round.set_defaults(handler=handle_init_review_round)
 
-    init_sprint_plan = subparsers.add_parser("init-sprint-plan")
-    init_sprint_plan.add_argument("--root", required=True)
-    init_sprint_plan.add_argument("--project-slug", required=True)
+    init_sprint_plan = add_command_parser(
+        subparsers,
+        "init-sprint-plan",
+        help_text="Create many tasks from a sprint plan file.",
+        example=(
+            "workflowctl init-sprint-plan --project-dir . --project-slug my-app --sprint "
+            "sprint-001-foundation --plan-file plan.json"
+        ),
+    )
+    add_project_locator_arguments(init_sprint_plan)
+    add_project_slug_argument(init_sprint_plan)
     init_sprint_plan.add_argument("--sprint", required=True)
     init_sprint_plan.add_argument("--plan-file", required=True)
     init_sprint_plan.set_defaults(handler=handle_init_sprint_plan)
 
-    sprint_check = subparsers.add_parser("sprint-check")
+    sprint_check = add_command_parser(
+        subparsers,
+        "sprint-check",
+        help_text="Validate all tasks in a sprint.",
+        example="workflowctl sprint-check --sprint-dir .theking/workflows/my-app/sprints/sprint-001-foundation",
+    )
     sprint_check.add_argument("--sprint-dir", required=True)
     sprint_check.set_defaults(handler=handle_sprint_check)
 
-    activate = subparsers.add_parser("activate")
+    activate = add_command_parser(
+        subparsers,
+        "activate",
+        help_text="Mark a task as the active task for hooks and workflow guidance.",
+        example="workflowctl activate --task-dir .theking/workflows/my-app/sprints/sprint-001-foundation/tasks/TASK-001-demo",
+    )
     activate.add_argument("--task-dir", required=True)
     activate.set_defaults(handler=handle_activate)
 
-    deactivate = subparsers.add_parser("deactivate")
-    deactivate.add_argument("--project-dir", required=True)
+    deactivate = add_command_parser(
+        subparsers,
+        "deactivate",
+        help_text="Clear the active task marker for a project.",
+        example="workflowctl deactivate --project-dir .",
+    )
+    deactivate.add_argument("--project-dir", required=True, help=DEACTIVATE_PROJECT_DIR_ARGUMENT_HELP)
     deactivate.set_defaults(handler=handle_deactivate)
 
-    ensure = subparsers.add_parser("ensure")
-    ensure.add_argument("--root", required=True)
-    ensure.add_argument("--project-slug", required=True)
+    ensure = add_command_parser(
+        subparsers,
+        "ensure",
+        help_text="Idempotently bootstrap a project with .theking scaffolding.",
+        example="workflowctl ensure --project-dir . --project-slug my-app",
+    )
+    add_project_locator_arguments(ensure)
+    add_project_slug_argument(ensure)
     ensure.set_defaults(handler=handle_ensure)
 
     return parser
+
+
+def add_command_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    name: str,
+    *,
+    help_text: str,
+    example: str,
+) -> argparse.ArgumentParser:
+    return subparsers.add_parser(
+        name,
+        help=help_text,
+        description=f"{help_text}\n\nExample:\n  {example}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+
+def add_project_locator_arguments(parser: argparse.ArgumentParser) -> None:
+    locator = parser.add_mutually_exclusive_group(required=True)
+    locator.add_argument("--project-dir", help=PROJECT_DIR_ARGUMENT_HELP)
+    locator.add_argument("--root", help=ROOT_ARGUMENT_HELP)
+
+
+def add_project_slug_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--project-slug", required=True, help=PROJECT_SLUG_ARGUMENT_HELP)
+
+
+def normalize_project_dir_arg(project_dir_value: str) -> Path:
+    project_dir_input = Path(project_dir_value).expanduser()
+    if project_dir_input.name == THEKING_DIRNAME:
+        return project_dir_input.parent.resolve()
+
+    resolved_project_dir = project_dir_input.resolve()
+    if resolved_project_dir.name == THEKING_DIRNAME:
+        return resolved_project_dir.parent
+    return resolved_project_dir
+
+
+def resolve_project_context(
+    project_slug_value: str,
+    *,
+    project_dir_value: str | None,
+    root_value: str | None,
+) -> tuple[Path, Path, str]:
+    project_slug = slugify(project_slug_value)
+
+    if project_dir_value is not None:
+        project_dir = normalize_project_dir_arg(project_dir_value)
+        if project_dir.name != project_slug:
+            raise WorkflowError(
+                "--project-dir must point to a directory whose basename exactly matches --project-slug. "
+                f"Got directory {project_dir.name!r} for slug {project_slug!r}; use --root <parent-dir> if the directory name differs."
+            )
+        workspace_root = project_dir.parent
+        return workspace_root, project_dir, project_slug
+
+    if root_value is None:
+        raise WorkflowError("Either --project-dir or --root is required")
+
+    root = Path(root_value).expanduser().resolve()
+    if root.name == THEKING_DIRNAME:
+        raise WorkflowError(
+            "--root expects the project parent directory. "
+            "Use --project-dir . or --project-dir .theking from a project directory."
+        )
+    if root.name == project_slug or slugify(root.name) == project_slug:
+        raise WorkflowError(
+            "--root expects the project parent directory, not the project directory itself. "
+            "Use --project-dir . or --project-dir .theking from a project directory."
+        )
+
+    workspace_root = root
+    project_dir = get_project_dir(workspace_root, project_slug)
+
+    return workspace_root, project_dir, project_slug
 
 
 # --- Handlers ---
 
 
 def handle_init_project(args: argparse.Namespace) -> None:
-    root = Path(args.root).expanduser().resolve()
-    project_slug = slugify(args.project_slug)
-    project_dir = get_project_dir(root, project_slug)
+    workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
     workflow_project_dir = get_workflow_project_dir(project_dir, project_slug)
 
-    ensure_local_path(project_dir, root, "project")
+    ensure_local_path(project_dir, workspace_root, "project")
     ensure_local_path(workflow_project_dir, project_dir, "workflow project")
     project_dir.mkdir(parents=True, exist_ok=True)
     ensure_theking_scaffold(project_dir, project_slug)
@@ -215,10 +386,12 @@ def handle_init_project(args: argparse.Namespace) -> None:
 
 
 def handle_init_sprint(args: argparse.Namespace) -> None:
-    root = Path(args.root).expanduser().resolve()
-    project_slug = slugify(args.project_slug)
+    _workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
     theme_slug = slugify(args.theme)
-    project_dir = get_project_dir(root, project_slug)
     workflow_project_dir = get_workflow_project_dir(project_dir, project_slug)
     ensure_local_path(workflow_project_dir, project_dir, "workflow project")
     ensure_file(workflow_project_dir / "project.md", "project.md")
@@ -248,8 +421,11 @@ def handle_init_sprint(args: argparse.Namespace) -> None:
 
 
 def handle_init_task(args: argparse.Namespace) -> None:
-    root = Path(args.root).expanduser().resolve()
-    project_slug = slugify(args.project_slug)
+    _workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
     sprint_name = normalize_sprint_name(args.sprint)
     task_slug = slugify(args.slug)
     title = normalize_title(args.title)
@@ -262,7 +438,6 @@ def handle_init_task(args: argparse.Namespace) -> None:
     validate_task_contract(task_type, execution_profile)
     verification_profile = infer_verification_profile(execution_profile)
 
-    project_dir = get_project_dir(root, project_slug)
     sprints_dir = get_workflow_project_dir(project_dir, project_slug) / "sprints"
     ensure_local_path(sprints_dir, project_dir, "sprints")
     requested_sprint_dir = sprints_dir / sprint_name
@@ -395,8 +570,11 @@ def handle_init_review_round(args: argparse.Namespace) -> None:
 
 
 def handle_init_sprint_plan(args: argparse.Namespace) -> None:
-    root = Path(args.root).expanduser().resolve()
-    project_slug = slugify(args.project_slug)
+    _workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
     sprint_name = normalize_sprint_name(args.sprint)
     plan_file = Path(args.plan_file).expanduser().resolve()
 
@@ -412,7 +590,6 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
     if not isinstance(task_entries, list) or not task_entries:
         raise WorkflowError("Plan file must contain at least one task")
 
-    project_dir = get_project_dir(root, project_slug)
     sprints_dir = get_workflow_project_dir(project_dir, project_slug) / "sprints"
     ensure_local_path(sprints_dir, project_dir, "sprints")
     requested_sprint_dir = sprints_dir / sprint_name
@@ -525,7 +702,7 @@ def handle_activate(args: argparse.Namespace) -> None:
 
 
 def handle_deactivate(args: argparse.Namespace) -> None:
-    project_dir = Path(args.project_dir).expanduser().resolve()
+    project_dir = normalize_project_dir_arg(args.project_dir)
     theking_dir = project_dir / THEKING_DIRNAME
     active_task_file = theking_dir / "active-task"
     ensure_local_path(active_task_file, project_dir, "active-task")
@@ -536,12 +713,14 @@ def handle_deactivate(args: argparse.Namespace) -> None:
 
 def handle_ensure(args: argparse.Namespace) -> None:
     """Idempotent bootstrap: create .theking scaffold if missing, skip if exists."""
-    root = Path(args.root).expanduser().resolve()
-    project_slug = slugify(args.project_slug)
-    project_dir = get_project_dir(root, project_slug)
+    workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
     workflow_project_dir = get_workflow_project_dir(project_dir, project_slug)
 
-    ensure_local_path(project_dir, root, "project")
+    ensure_local_path(project_dir, workspace_root, "project")
     ensure_local_path(workflow_project_dir, project_dir, "workflow project")
     project_dir.mkdir(parents=True, exist_ok=True)
     ensure_theking_scaffold(project_dir, project_slug)
@@ -743,7 +922,7 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
 
     # --- Shared template variables ---
     theking_cmd = "workflowctl"
-    workflow_root = ".."
+    workflow_root = "."
     workflow_root_quoted = shlex.quote(workflow_root)
     project_dir_hint = "."
     project_dir_quoted = shlex.quote(project_dir_hint)
