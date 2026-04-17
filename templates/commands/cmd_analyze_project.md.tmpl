@@ -1,57 +1,31 @@
 ---
-description: 分析项目源码，填充 .theking/context/ 知识库
+description: 分析项目源码，填充 .theking/context/ 知识库（规则以 knowledge-base skill 为准）
 ---
 
 # Analyze Project
 
 扫描项目结构和源码，填充 `.theking/context/` 下的知识文档。
 
+本命令只做**显式入口**。**分析步骤、写入规则、PLACEHOLDER 填充流程、context/ vs memory/ 的边界**一律以 `.theking/skills/knowledge-base/SKILL.md` 为准，避免两处描述漂移。
+
 ## Usage
 
-`/analyze-project [full|incremental]`
+```
+/analyze-project            # 等同于 full，首次使用或有 PLACEHOLDER 时跑
+/analyze-project full        # 全量扫描，填充所有 PLACEHOLDER
+/analyze-project incremental # 增量更新，仅补充新发现，不覆盖手写内容
+```
 
-## Full 分析（默认，首次使用）
+## 执行时的唯一动作
 
-检查 `.theking/context/` 下是否有 `<!-- PLACEHOLDER -->` 标记。如果有，逐项分析填充。
+1. 读取 `.theking/skills/knowledge-base/SKILL.md`
+2. 按 skill 中「PLACEHOLDER 检测与自动填充」章节的流程执行
+3. 分析原则、写入位置、知识生命周期**全部**遵循该 skill
 
-### 1. 扫描项目结构
+## 没有 slash command 的工具怎么用
 
-- `ls` 顶层目录
-- 读取配置文件：`package.json` / `Cargo.toml` / `pyproject.toml` / `go.mod` / `Makefile` / `Dockerfile`
-- 识别：语言、框架、构建工具、测试框架
+Cursor / Codex / CodeBuddy 等不支持 slash command 的工具，直接对 agent 说：
 
-### 2. 填充 project-overview.md
+> 按 `knowledge-base` skill 的流程分析本项目并填充 `.theking/context/`
 
-- 一句话说明项目解决什么问题
-- 负责范围（3-5 条核心职责）
-- 代码主入口、启动命令、测试命令
-- 技术栈列表
-- 关键术语
-
-### 3. 填充 architecture.md
-
-- 目录结构注释（tree depth=2）
-- 关键模块表（模块、路径、作用、依赖）
-- 核心数据流描述
-- 架构风险点
-
-### 4. 填充 dev-workflow.md
-
-- 环境准备步骤
-- 开发命令（install / dev / test / build / lint）
-- 测试分层描述
-
-### 5. 记录不确定项
-
-无法确认的发现写入 `.theking/memory/MEMORY.md`。
-
-## Incremental 分析
-
-项目有新增模块或重大变更时，重新扫描并更新 `context/` 中过时的内容。不覆盖已有手写内容，只补充新发现。
-
-## 原则
-
-- 只写能从代码中确认的事实，不编造
-- 填充后删除 `<!-- PLACEHOLDER: ... -->` 注释
-- 不确定的内容只写 `memory/MEMORY.md`
-- 已有 README 或文档优先提取
+效果与 `/analyze-project` 完全等价。

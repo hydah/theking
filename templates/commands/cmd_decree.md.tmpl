@@ -6,9 +6,7 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 
 皇帝一道旨意下去，群臣领旨办事。
 
-**治理规则与朝廷架构**以 `.theking/skills/workflow-governance/SKILL.md` 为准，本命令只管编排。
-
-以下 `workflowctl` 命令默认在项目根目录执行，并依赖本机已安装的 `workflowctl` 入口。优先把 `--project-dir` 传项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可。
+**本命令是 Claude Code 的加速入口。**全部规则、Phase 1-5 编排、workflowctl 命令序列、朝廷架构——**唯一真相源**在 `.theking/skills/workflow-governance/SKILL.md`。其他 AI 工具（Cursor / Codex / CodeBuddy 等）直接读该 skill 即可，体验完全等价。
 
 ## 🎺 Usage · 起手圣旨
 
@@ -16,11 +14,30 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 /decree <需求描述>
 ```
 
-示例（粒度通吃，大到新功能小到 bug 修复都走同一道旨意）：
+粒度通吃，大到新功能小到 bug 修复都走同一道旨意：
+
 ```
 /decree 实现用户登录功能，支持 OAuth 和手机验证码
 /decree 修复登录页 token 过期不刷新的 bug
 ```
+
+## 📜 本命令的执行
+
+皇帝接下需求：**$ARGUMENTS**
+
+按 `workflow-governance` skill 中「🗺️ 施政次第 · Phase 1-5 完整编排」章节的全部步骤处理本旨意。**凡需求皆先立 sprint，然后动笔。无例外。**
+
+## 🗺️ Phase 对照 · 皇帝语言导航
+
+| Phase | 朝廷名 | 核心动作 | skill 章节 |
+|-------|--------|---------|-----------|
+| Phase 1 | 🔍 察情 · 斥候初勘 | 上下文勘验、影响面、风险标签 | Phase 1: 察情 |
+| Phase 2 | ⚖️ 议旨 · 朝堂裁夺 | 完整/轻量流程决策 + checkpoint | Phase 2: 议旨 |
+| Phase 3 | 📜 擘画 · 立纲定目 | `ensure` → `init-sprint` → `init-task` | Phase 3: 擘画 |
+| Phase 4 | ⚔️ 领旨 · 百工施为 | activate → spec → TDD red/green → verify → commit → review → 盖印 | Phase 4: 领旨 |
+| Phase 5 | 🏛️ 缴旨 · 班师覆命 | sprint-check → 全量回归 → 画像验证 → 裁汰 → 编典 → 修史 → 封印 | Phase 5: 缴旨 |
+
+所有步骤细节、workflowctl 命令、状态推进时机、门禁、异常分支、agent 触发规则**全部在 skill 里**。不在本命令里重复。
 
 ## 🧭 Compact Recovery · 续命回朝
 
@@ -31,260 +48,3 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 ```
 
 若 `status` 显示仍有 decree checkpoint 或 active task，顺输出的 next step 续执，不要另起一道新旨。
-
-## 🗺️ 施政流程
-
-接旨之后，按以下步骤自动编排。**凡需求皆先立 sprint，然后动笔。无例外。**
-
-### 🔍 Phase 1: 察情 — 斥候初勘（上下文勘验）
-
-兵马未动，粮草先行；未察卷宗，不敢奏对。先派斥候探实，后议流程。至少完成以下动作：
-
-1. 遍阅直接相关的代码、测试、文档、报错、接口或数据契约（此谓「案牍」）
-2. 勘明影响面：涉及哪些文件、模块、用户流程、外部接口（此谓「波及」）
-3. 标记风险画像：是否触发 auth、input、api、web.browser、schema/config/public contract 变化
-4. 列出仍不明之处；但有关键未决，一律按完整流程处理
-
-奏报格式固定如下：
-
-```
-👑 [decree] 上下文初勘：
-- 已查看：<代码/测试/文档/报错>
-- 影响面：<模块/接口/用户流程>
-- 风险标签：<无 / auth / input / api / web.browser / ...>
-- 未决问题：<无 / 列表>
-```
-
-**⛔ 未察案牍、未勘波及，不得擅宣「轻量流程」，更不得动笔改代码。**
-
----
-
-### ⚖️ Phase 2: 议旨 — 朝堂裁夺（流程级别决策）
-
-既已察情，百官集议于朝堂；皇帝听议，裁夺流程之轻重（判据详见 workflow-governance）：
-
-**完整流程**（常见信号：3+ 文件、架构决策、> 30 分钟，或存在关键未决）：
-```
-👑 [decree] 此旨意走完整流程。
-理由：<基于上下文初勘的证据>
-下一步：召中书令（planner）谋划，创建 sprint。
-```
-
-**轻量流程**（唯有已完成初勘且可确认为单一变更单元时方可启用）：
-```
-👑 [decree] 此旨意走轻量流程。
-理由：<基于上下文初勘的证据>
-下一步：创建单 task sprint。
-```
-
-**⛔ 若仍有关键未决，或施工途中发现隐藏耦合/验证范围扩大，须即刻升为完整流程，不得硬撑。**
-
-裁夺一成，即刻落盘 checkpoint，以防 compact 断续：
-
-```bash
-{theking_cmd} checkpoint --project-dir {workflow_root_quoted} --project-slug {project_slug} --phase phase-2-triage --flow <full|lightweight> --summary "<一行旨意摘要>" --next-step "<下一步动作>"
-```
-
----
-
-### 📜 Phase 3: 擘画 — 立纲定目（Sprint 规划，未毕不得动代码）
-
-先执行 Bootstrap（幂等）：
-
-```bash
-{theking_cmd} ensure --project-dir {workflow_root_quoted} --project-slug {project_slug}
-```
-
-#### 完整流程
-
-1. 召 **中书令**（planner）起草方略，拆解需求为 task 列表
-2. 涉及架构决策时，先问 **太傅**（architect）
-3. 确认 task 间依赖关系（DAG）
-4. 创建 sprint + 批量创建 task：
-   ```bash
-   {theking_cmd} init-sprint --project-dir {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
-   {theking_cmd} init-sprint-plan --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --plan-file plan.json
-   ```
-5. 输出 Task Overview 表和依赖图，呈御览
-
-#### 轻量流程
-
-1. 创建单 task sprint（跳过 planner）：
-   ```bash
-   {theking_cmd} init-sprint --project-dir {workflow_root_quoted} --project-slug {project_slug} --theme <theme>
-   {theking_cmd} init-task --project-dir {workflow_root_quoted} --project-slug {project_slug} --sprint <sprint> --slug <slug> --title <title> --task-type <type>
-   ```
-
-**✅ 检查点：sprint 和 task 已创建，方可进入 Phase 4。**
-
-**⛔ 叩阙自检 — 入 Phase 4 前必须全部为真：**
-- [ ] `{theking_cmd} ensure` 已执行
-- [ ] `init-sprint` + `init-task`（或 `init-sprint-plan`）已执行，task 目录已存在
-
-（`activate` / `spec.md` 填写 / `advance-status planned` 由 Phase 4 步骤 1-2 的子门禁管辖，不在此重复。）
-
-**若任一为假，禁止调用文件编辑工具（`replace_in_file` / `write_to_file` / `Edit` / `Write` 等）修改源代码文件（.go / .ts / .tsx / .js / .jsx / .py / .rs / .java / .css / .html 等）。**
-
-`init-sprint` 与 `init-sprint-plan` 都会自动刷新 decree checkpoint（`phase: phase-3-planning`），并在创建完 task 后打印 NEXT STEP 提示。若需手动覆写 summary / next-step，可再显式调用：
-
-```bash
-{theking_cmd} checkpoint --project-dir {workflow_root_quoted} --project-slug {project_slug} --phase phase-3-planning --flow <full|lightweight> --summary "<同一条旨意摘要>" --sprint <SPRINT> --task-dir <TASK_DIR> --next-step "<下一步动作>"
-```
-
-可选：在 `plan.json` 的每个 task 条目里提供 `scope` / `non_goals` / `acceptance` / `edge_cases` 字符串数组，`init-sprint-plan` 会把它们种子进 spec.md，免得 AI 建完 task 后忘了撰 spec。
-
----
-
-### ⚔️ Phase 4: 领旨 — 百工施为（Task 开发）
-
-按依赖图拓扑排序，无依赖的 task **并行启动**（轻量流程只有 1 个 task）。**每个 task 严走以下主干流程**，状态推进内嵌于每步末尾（`workflowctl check` 只校验结构，不替你推状态）。
-
-#### 🛡️ 主干流程（必做，顺序不可跳）
-
-**1. 启印 · 激活（activate）**
-```bash
-{theking_cmd} activate --task-dir <TASK_DIR>
-```
-
-**2. 撬章 · 写 Spec**
-- 完整流程与轻量流程使用同一模板；Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须保留
-- 轻量流程可以短写，但不得留空、不得省略章节
-- 撰毕立刻：`{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status planned`
-
-> **⛔ 章表门禁（spec→TDD）— 必须全部为真方可进步骤 3：**
-> - [ ] spec.md 所有 section 已填写（不是模板 placeholder）
-> - [ ] task status 已推到 `planned`
->
-> **未达，禁止调用文件编辑工具修改源代码文件。**
-
-**3. 门下封驳 · TDD Red**
-- 召 **门下侍中**（tdd-guide）先置刑狱：不经门下封驳者不得施行
-- 写一个或一组最小能暴露缺陷的测试，运行应当**失败**（以证其有效）
-- 测试失败后：`{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status red`
-
-**4. 最小立成 · TDD Green**
-- 以**最小**实现使步骤 3 的测试通过，不得擅自外扩
-- 测试通过后：`{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status green`
-
-**5. 亲勘实证 · 基础验证 + 画像验证**
-
-运行与改动相关的 build/lint/type/unit checks，并补齐执行画像要求的验证：
-- `web.browser`：至少做一次真实页面 smoke 或轻量 e2e
-- `backend.http`：至少做一次真实请求或集成式验证
-- `backend.cli` / `backend.job`：至少执行真实入口并核对输出或副作用
-- 将命令、结果、截图/日志等证据写入 `verification/<profile>/`
-
-**6. 归档 · 提交（Commit）**
-- 按有意义粒度 commit：典型为 `spec + red 测试` 一次、`green 实现` 一次、（可选）`重构` 一次
-- **禁止**整个 task 一锅端提交；**禁止**`WIP` 粒度碎 commit
-
-**7. 御史复核 · Review**
-```bash
-{theking_cmd} init-review-round --task-dir <TASK_DIR>
-```
-- 召 **御史大夫**（code-reviewer）— 必须
-- 召 **刑部尚书**（security-reviewer）— auth/input/api 或 backend.http 时
-- 召 **兵部尚书**（e2e-runner）— web.browser 时
-- **有 CRITICAL/HIGH findings → 走【驳回重议分支】，不要在当前轮次里直接改代码后标 resolved**
-- **全部已解决 → 产出 `round-NNN.resolved.md`（含 `## Fixes` + `## Verification`）**
-
-**8. 盖印 · 终态校验**
-```bash
-{theking_cmd} check --task-dir <TASK_DIR>
-{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status ready_to_merge
-{theking_cmd} advance-status --task-dir <TASK_DIR> --to-status done
-```
-
-**✅ 终态闸门**：只有 task 为 `done`（或显式 `blocked`）方可进入 Phase 5。`workflowctl deactivate` 会对非终态 task 直接拒执。
-
----
-
-#### 🔄 驳回重议分支（review 发现 CRITICAL/HIGH 时必走）
-
-```
-a. {theking_cmd} advance-status --task-dir <TASK_DIR> --to-status changes_requested
-b. 回步骤 3：若需增/改测试，先让测试重新变红
-c. 回步骤 4：修实现使测试重新变绿
-d. 回步骤 5：重跑基础验证 + 画像验证
-e. 回步骤 6：以 fixup commit 落盘
-f. 产出 round-NNN.resolved.md（含 ## Fixes + ## Verification）
-g. 若尚有未解决 findings → 再开一轮 init-review-round；否则回步骤 8
-```
-
-**⛔ 禁止**：在 review 轮次里直接改代码后把状态从 `in_review` 跳回 `in_review` 并标 resolved，**必经 `changes_requested` → `red`/`green`**。
-
-#### 🚨 其他异常分支
-
-- **构建 / 类型 / lint 失败** → 召 **工部尚书**（build-error-resolver）→ 回步骤 5 重新验证
-- **性能瓶颈** → 召 **户部尚书**（perf-optimizer）→ 先在步骤 3 补性能测试（red），再回步骤 4
-
----
-
-### 🏛️ Phase 5: 缴旨 — 班师覆命（Sprint 收尾）
-
-**⛔ 入 Phase 5 门禁**：本 sprint 所有 task 必须是 `done`（或显式 `blocked` 并载明缘由）。有任一 task 仍在 `red`/`green`/`in_review` 等中间态，**禁止**进入 Phase 5。
-
-#### 1. 📋 点验 · Sprint artifact 校验
-
-```bash
-{theking_cmd} sprint-check --sprint-dir <SPRINT_DIR>
-```
-
-#### 2. 🧪 演武 · Sprint 级全量回归验证（必做，不可省）
-
-各 task 单战胜 ≠ 合击亦胜。多 task 合并后须再整体演武一次：
-
-- 完整 **build**（所有受影响模块，不是单 task 的局部 build）
-- 完整 **lint + type-check**
-- 完整 **unit + integration 测试套件**
-- 失败 → 定位到具体 task，**回到 Phase 4 对应 task** 修复（状态机从 `done` 回退到 `red`/`green` 须显式推进），修完回本步重跑
-
-全量回归的命令与结果证据写入 `sprint-dir/verification/regression.md`。
-
-#### 3. 🎏 大阅 · Sprint 级画像验证（按需，依 sprint 涉及画像触发）
-
-- sprint 涉及 `web.browser` → 召 **兵部尚书**（e2e-runner）跑一次**跨 task 的端到端场景**（不只是单 task smoke）
-- sprint 涉及 `backend.http` → 跑一次关键集成链路（多服务协同、真实依赖）
-- sprint 涉及 `backend.cli` / `backend.job` → 按关键 pipeline 实跑一次
-- 证据写入 `sprint-dir/verification/<profile>/`
-
-#### 4. 🧹 裁汰 · 代码清理（完整流程必做，轻量流程按需）
-
-召 **吏部尚书**（refactor-cleaner）裁汰冗余代码。**注意：refactor-cleaner 会修改源代码，必走完整验证闭环，不得跳过 review。**
-
-```
-a. refactor-cleaner 产出删除/重构清单（dead code、重复、过时抽象）
-b. 应用改动
-c. 再次执行步骤 2（完整 build + test），确认无误删被动态引用之代码
-d. 召 code-reviewer 审查清单，重点：反射 / 动态 import / 配置字符串引用 / 外部 API 兼容
-e. 有 CRITICAL/HIGH → 回滚或补修；全绿 → 以独立 commit 落盘
-```
-
-**⛔ 禁止**：把 refactor-cleaner 的改动直接 commit，不跑 build+test+review。
-
-#### 5. 📖 编典 · 知识提炼
-
-将有复用价值的分析产物提炼到 `.theking/context/`（架构决策、踩坑记录、可复用模式）。
-
-#### 6. 📜 修史 · 文档更新（完整流程必做，轻量流程按需）
-
-召 **礼部尚书**（doc-updater）更新 README / ARCHITECTURE / CHANGELOG / CLAUDE.md 等。
-
-```
-a. doc-updater 产出文档变更
-b. 召 code-reviewer 做【文档专项轻审】，重点：
-   - 文档与实际代码是否一致（接口签名、配置项、命令、默认值）
-   - 是否引入过时信息或矛盾
-   - 示例代码是否能跑
-c. 不一致 → 回炉重写；一致 → commit
-```
-
-#### 7. 🔒 封印 · 停用
-
-```bash
-{theking_cmd} deactivate --project-dir {project_dir_quoted}
-```
-
-#### 8. 📯 奏捷 · 汇报旨意执行结果
-
-总结本次交付：完成的 task 列表、全量回归结果、知识沉淀指针、遗留 blocked 项。
