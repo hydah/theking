@@ -24,6 +24,16 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 /decree 修复登录页 token 过期不刷新的 bug
 ```
 
+## Compact Recovery
+
+如果会话刚做过 compact、切到新工具，或你不确定这道旨意做到哪一步，先恢复状态，再继续执行：
+
+```bash
+{theking_cmd} status --project-dir {workflow_root_quoted} --project-slug {project_slug}
+```
+
+如果 `status` 显示仍有 decree checkpoint 或 active task，先沿着输出的 next step 继续，不要重新发起一条新的 decree。
+
 ## 流程
 
 收到旨意后，按以下步骤自动编排。**所有需求都必须先建 sprint，再写代码，无例外。**
@@ -71,6 +81,12 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 
 **⛔ 若仍有关键未知项，或执行中发现隐藏耦合/验证范围扩大，必须升级到完整流程。**
 
+分流结论一旦做出，立刻落盘 checkpoint，防止 compact 后丢失后续编排：
+
+```bash
+{theking_cmd} checkpoint --project-dir {workflow_root_quoted} --project-slug {project_slug} --phase phase-2-triage --flow <full|lightweight> --summary "<一行旨意摘要>" --next-step "<下一步动作>"
+```
+
 ---
 
 ### Phase 3: 谋划 — Sprint 规划（必须完成才能写代码）
@@ -102,6 +118,12 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
    ```
 
 **✅ 检查点：sprint 和 task 已创建，才能进入 Phase 4。**
+
+创建完 sprint / task 后，立即刷新 checkpoint：
+
+```bash
+{theking_cmd} checkpoint --project-dir {workflow_root_quoted} --project-slug {project_slug} --phase phase-3-planning --flow <full|lightweight> --summary "<同一条旨意摘要>" --sprint <SPRINT> --task-dir <TASK_DIR> --next-step "<下一步动作>"
+```
 
 ---
 

@@ -74,6 +74,18 @@ workflowctl ensure --project-dir . --project-slug my-app
 理由：<基于已查看证据的判断>
 ```
 
+compact 或切到另一个 AI 工具后，不要重新猜这道旨意做到哪一步。先运行：
+
+```bash
+workflowctl status --project-dir . --project-slug <PROJECT_SLUG>
+```
+
+如果已经完成分流，但还没真正进入 task，把下一步动作落到 decree checkpoint：
+
+```bash
+workflowctl checkpoint --project-dir . --project-slug <PROJECT_SLUG> --phase phase-2-triage --flow <full|lightweight> --summary "<一行摘要>" --next-step "<下一步动作>"
+```
+
 ## Post-Bootstrap
 
 初始化完成后，检查 `.theking/context/` 下的文件是否包含 `<!-- PLACEHOLDER -->` 标记。如果有，按 knowledge-base skill 的分析流程主动填充。

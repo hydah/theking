@@ -450,6 +450,211 @@ def test_deactivate_rejects_symlinked_theking_directory_outside_project(tmp_path
     assert (external_theking / "active-task").read_text(encoding="utf-8") == "/tmp/task\n"
 
 
+def test_status_reports_checkpoint_before_task_activation(tmp_path: Path) -> None:
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir()
+    init_result = run_cli(
+        ["init-project", "--project-dir", str(project_dir), "--project-slug", "demo-app"],
+        cwd=project_dir,
+    )
+    checkpoint_result = run_cli(
+        [
+            "checkpoint",
+            "--project-dir",
+            str(project_dir),
+            "--project-slug",
+            "demo-app",
+            "--phase",
+            "phase-3-planning",
+            "--flow",
+            "full",
+            "--summary",
+            "Fix upload auth flow",
+            "--next-step",
+            "Create sprint and tasks from planner output",
+        ],
+        cwd=project_dir,
+    )
+
+    result = run_cli(
+        ["status", "--project-dir", str(project_dir), "--project-slug", "demo-app"],
+        cwd=project_dir,
+    )
+
+    assert init_result.returncode == 0, init_result.stderr
+    assert checkpoint_result.returncode == 0, checkpoint_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Recovery source: decree checkpoint" in result.stdout
+    assert "Summary: Fix upload auth flow" in result.stdout
+    assert "Phase: phase-3-planning" in result.stdout
+    assert "Next step: Create sprint and tasks from planner output" in result.stdout
+    assert "No active task found." in result.stdout
+
+
+def test_status_suggests_latest_unfinished_task_when_no_active_task(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert sprint_dir.is_dir()
+    assert result.returncode == 0, result.stderr
+    assert "Recovery source: latest unfinished task" in result.stdout
+    assert "Latest unfinished task: TASK-001-task-a (draft)" in result.stdout
+    assert "Activate this task" in result.stdout
+    assert "workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-task-a --to-status planned" in result.stdout
+
+
+def test_status_prefers_latest_unfinished_task_over_stale_checkpoint(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    checkpoint_result = run_cli(
+        [
+            "checkpoint",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--phase",
+            "phase-2-triage",
+            "--flow",
+            "full",
+            "--summary",
+            "Old decree summary",
+            "--next-step",
+            "Create sprint and tasks",
+        ],
+        cwd=tmp_path,
+    )
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert sprint_dir.is_dir()
+    assert checkpoint_result.returncode == 0, checkpoint_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Recovery source: latest unfinished task" in result.stdout
+    assert "Saved decree checkpoint:" in result.stdout
+    assert "Next step: Create sprint and tasks" in result.stdout
+    assert result.stdout.index("Latest unfinished task: TASK-001-task-a (draft)") < result.stdout.index("Saved decree checkpoint:")
+
+
+def test_status_reports_active_task_green_next_step(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
+    set_task_status(
+        task_md,
+        status="green",
+        history=["draft", "planned", "red", "green"],
+        current_review_round=0,
+    )
+    activate_result = run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert activate_result.returncode == 0, activate_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Recovery source: active-task" in result.stdout
+    assert "ID: TASK-001-task-a" in result.stdout
+    assert "Status: green" in result.stdout
+    assert "Current review round: 0" in result.stdout
+    assert "workflowctl init-review-round --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-task-a" in result.stdout
+
+
+def test_status_errors_when_active_task_points_to_missing_directory(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    project_dir = tmp_path / "demo-app"
+    (project_dir / ".theking" / "active-task").write_text(str(sprint_dir / "tasks" / "TASK-404-missing") + "\n", encoding="utf-8")
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "run workflowctl activate again" in result.stderr.lower()
+
+
+def test_status_uses_pre_blocked_stage_for_next_step(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
+    set_task_status(
+        task_md,
+        status="blocked",
+        history=["draft", "planned", "red", "blocked"],
+        current_review_round=0,
+    )
+    activate_result = run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert activate_result.returncode == 0, activate_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Status: blocked" in result.stdout
+    assert "workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-task-a --to-status red" in result.stdout
+
+
+def test_blocked_in_review_can_resume_via_advance_status(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
+    set_task_status(
+        task_md,
+        status="blocked",
+        history=["draft", "planned", "red", "green", "in_review", "blocked"],
+        current_review_round=1,
+    )
+
+    result = run_cli(
+        ["advance-status", "--task-dir", str(task_dir), "--to-status", "in_review"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    frontmatter = parse_frontmatter(task_md.read_text(encoding="utf-8"))
+    assert frontmatter["status"] == "in_review"
+    assert frontmatter["current_review_round"] == 1
+    assert frontmatter["status_history"] == ["draft", "planned", "red", "green", "in_review", "blocked", "in_review"]
+
+
+def test_status_blocked_review_task_shows_resume_in_review_command(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    task_md = task_dir / "task.md"
+    write_complete_spec(task_dir)
+    set_task_status(
+        task_md,
+        status="blocked",
+        history=["draft", "planned", "red", "green", "in_review", "blocked"],
+        current_review_round=1,
+    )
+    activate_result = run_cli(["activate", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert activate_result.returncode == 0, activate_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Status: blocked" in result.stdout
+    assert "workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-task-a --to-status in_review" in result.stdout
+
+
 def test_advance_status_updates_status_and_history_for_non_review_transition(tmp_path: Path) -> None:
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     task_dir = sprint_dir / "tasks" / "TASK-001-task-a"

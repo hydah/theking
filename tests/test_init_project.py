@@ -69,6 +69,8 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert (theking_dir / "context" / "dev-workflow.md").is_file()
     assert (theking_dir / "memory" / "MEMORY.md").is_file()
     assert (theking_dir / "verification" / "README.md").is_file()
+    assert (theking_dir / "state").is_dir()
+    assert (theking_dir / "state" / "session").is_dir()
     assert (theking_dir / "agents" / "README.md").is_file()
     assert (theking_dir / "agents" / "catalog.md").is_file()
     assert (theking_dir / "commands").is_dir()
@@ -116,12 +118,17 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert "开发工作流底线" in bootstrap_doc
     assert "先做上下文初勘，再决定完整流程还是轻量流程" in bootstrap_doc
     assert "`init-task` 生成的 `spec.md` 是占位稿" in bootstrap_doc
+    assert "Compact Recovery" in bootstrap_doc
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} status --project-dir . --project-slug demo-app" in bootstrap_doc
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} checkpoint --project-dir . --project-slug demo-app --phase phase-2-triage" in bootstrap_doc
     assert "错误示例" in bootstrap_doc
     assert "正确示例" in bootstrap_doc
     assert "工作流底线" in theking_readme
+    assert "state/" in theking_readme
     assert "轻量流程不允许跳过 spec、TDD、build/lint/type/unit、执行画像验证、code review、check/sprint-check" in theking_readme
     assert "进入 `red` 前必须补全五个 section 的实际内容" in theking_readme
     assert "先完成最小上下文初勘，再创建 sprint 或 task" in dev_workflow
+    assert f"{PORTABLE_WORKFLOWCTL_CMD} status --project-dir . --project-slug demo-app" in dev_workflow
     assert "# 编辑 spec.md，补全五个 section 的实际内容" in dev_workflow
     assert dev_workflow.index("init-task --project-dir . --project-slug demo-app") < dev_workflow.index(
         "# 编辑 spec.md，补全五个 section 的实际内容"
@@ -136,12 +143,16 @@ def test_source_docs_explain_context_before_triage_and_spec_before_red() -> None
 
     assert "先做上下文初勘，再决定完整流程还是轻量流程" in readme
     assert "轻量流程只减少规划开销，不减少交付要求" in readme
+    assert "workflowctl status --project-dir . --project-slug demo-app" in readme
+    assert "workflowctl checkpoint --project-dir . --project-slug demo-app --phase phase-2-triage" in readme
     assert readme.index("workflowctl init-task --project-dir . --project-slug demo-app --sprint sprint-001-foundation --slug login-flow") < readme.index(
         "# 编辑 .theking/.../spec.md，补全 Scope / Non-Goals / Acceptance / Test Plan / Edge Cases"
     ) < readme.index("workflowctl advance-status --task-dir .theking/workflows/demo-app/sprints/sprint-001-foundation/tasks/TASK-001-login-flow --to-status red")
 
     assert "第一步不是宣告“轻量流程”，而是完成最小上下文初勘" in skill
     assert "轻量流程只减少 planner 拆解开销，不减少交付要求" in skill
+    assert "workflowctl status --project-dir . --project-slug <PROJECT_SLUG>" in skill
+    assert "workflowctl checkpoint --project-dir . --project-slug <PROJECT_SLUG> --phase phase-2-triage" in skill
 
 
 def test_init_project_quotes_shell_paths_in_generated_examples(tmp_path: Path) -> None:

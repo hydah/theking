@@ -55,6 +55,12 @@
 
 以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。优先把 `--project-dir` 传当前项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可。
 
+如果会话刚 compact 过，先恢复当前 decree / task 状态：
+
+```bash
+{theking_cmd} status --project-dir {workflow_root_quoted} --project-slug {project_slug}
+```
+
 先完成最小上下文初勘，再创建 sprint 或 task。`init-task` 生成的 `spec.md` 是占位稿，进入 `red` 前必须补全 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 五段内容：
 
 ```bash

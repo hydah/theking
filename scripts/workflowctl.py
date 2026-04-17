@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -34,6 +35,7 @@ try:
         get_workflow_project_dir,
         humanize_slug,
         infer_execution_profile,
+        infer_blocked_resume_status,
         infer_required_agents,
         infer_verification_profile,
         load_task_document,
@@ -50,6 +52,7 @@ try:
         slugify,
         stringify,
         task_requires_security_review,
+        validate_spec,
         validate_sprint_dir,
         validate_task_contract,
         validate_task_dir,
@@ -80,6 +83,7 @@ except ImportError:
         get_workflow_project_dir,
         humanize_slug,
         infer_execution_profile,
+        infer_blocked_resume_status,
         infer_required_agents,
         infer_verification_profile,
         load_task_document,
@@ -96,6 +100,7 @@ except ImportError:
         slugify,
         stringify,
         task_requires_security_review,
+        validate_spec,
         validate_sprint_dir,
         validate_task_contract,
         validate_task_dir,
@@ -113,6 +118,8 @@ DEACTIVATE_PROJECT_DIR_ARGUMENT_HELP = (
 )
 ROOT_ARGUMENT_HELP = "Project parent directory containing <project-slug>. Backward-compatible option."
 PROJECT_SLUG_ARGUMENT_HELP = "Project slug in kebab-case. Usually the project directory name."
+CHECKPOINT_FLOW_CHOICES = ("full", "lightweight")
+DEGREE_CHECKPOINT_FILENAME = "decree-session.md"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -275,6 +282,35 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_locator_arguments(ensure)
     add_project_slug_argument(ensure)
     ensure.set_defaults(handler=handle_ensure)
+
+    checkpoint = add_command_parser(
+        subparsers,
+        "checkpoint",
+        help_text="Persist the current decree progress so compacted sessions can resume safely.",
+        example=(
+            "workflowctl checkpoint --project-dir . --project-slug my-app --phase phase-3-planning "
+            "--flow full --summary \"Fix upload auth flow\" --next-step \"Create sprint and tasks from planner output\""
+        ),
+    )
+    add_project_locator_arguments(checkpoint)
+    add_project_slug_argument(checkpoint)
+    checkpoint.add_argument("--phase", required=True)
+    checkpoint.add_argument("--summary", required=True)
+    checkpoint.add_argument("--next-step", required=True)
+    checkpoint.add_argument("--flow", choices=CHECKPOINT_FLOW_CHOICES)
+    checkpoint.add_argument("--sprint")
+    checkpoint.add_argument("--task-dir")
+    checkpoint.set_defaults(handler=handle_checkpoint)
+
+    status = add_command_parser(
+        subparsers,
+        "status",
+        help_text="Show the current decree/task recovery state after compact or session resume.",
+        example="workflowctl status --project-dir . --project-slug my-app",
+    )
+    add_project_locator_arguments(status)
+    add_project_slug_argument(status)
+    status.set_defaults(handler=handle_status)
 
     return parser
 
@@ -500,10 +536,13 @@ def handle_advance_status(args: argparse.Namespace) -> None:
     original_sprint_content = sprint_md.read_text(encoding="utf-8")
     task_data, body = load_task_document(task_md)
 
-    if args.to_status.strip() == "in_review":
-        raise WorkflowError("Use init-review-round to enter in_review")
+    requested_status = args.to_status.strip()
+    if requested_status == "in_review":
+        current_status = stringify(task_data["status"])
+        if current_status != "blocked" or infer_blocked_resume_status([stringify(entry) for entry in task_data["status_history"]]) != "in_review":
+            raise WorkflowError("Use init-review-round to enter in_review")
 
-    updated_task = apply_status_transition(task_data, args.to_status)
+    updated_task = apply_status_transition(task_data, requested_status)
 
     try:
         write_task_document(task_md, updated_task, body)
@@ -744,6 +783,129 @@ def handle_ensure(args: argparse.Namespace) -> None:
     print(f"OK {theking_dir}")
 
 
+def handle_checkpoint(args: argparse.Namespace) -> None:
+    _workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
+    checkpoint_path = get_decree_checkpoint_path(project_dir)
+    ensure_local_path(checkpoint_path, project_dir, "decree checkpoint")
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sprint_name = normalize_sprint_name(args.sprint) if args.sprint else ""
+    task_id = ""
+    task_dir_relative = ""
+
+    if args.task_dir:
+        input_task_dir = Path(args.task_dir).expanduser()
+        if input_task_dir.is_symlink():
+            raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
+        task_dir = input_task_dir.resolve()
+        task_paths = derive_task_paths(task_dir)
+        ensure_local_path(task_dir, project_dir, "task")
+        task_data, _body = load_task_document(task_paths.task_md)
+        task_id = stringify(task_data["id"])
+        task_dir_relative = task_dir.relative_to(project_dir).as_posix()
+        if sprint_name and task_paths.sprint_dir.name != sprint_name:
+            raise WorkflowError("--sprint must match the sprint that owns --task-dir")
+        sprint_name = task_paths.sprint_dir.name
+
+    checkpoint_lines = [
+        "---",
+        f"project_slug: {serialize_frontmatter_string(project_slug)}",
+        f"summary: {serialize_frontmatter_string(args.summary.strip())}",
+        f"phase: {serialize_frontmatter_string(args.phase.strip())}",
+        f"next_step: {serialize_frontmatter_string(args.next_step.strip())}",
+        f"updated_at: {serialize_frontmatter_string(datetime.now(timezone.utc).isoformat())}",
+    ]
+    if args.flow:
+        checkpoint_lines.append(f"flow: {serialize_frontmatter_string(args.flow)}")
+    if sprint_name:
+        checkpoint_lines.append(f"sprint: {serialize_frontmatter_string(sprint_name)}")
+    if task_id:
+        checkpoint_lines.append(f"task: {serialize_frontmatter_string(task_id)}")
+    if task_dir_relative:
+        checkpoint_lines.append(f"task_dir: {serialize_frontmatter_string(task_dir_relative)}")
+    checkpoint_lines.extend(["---", ""])
+
+    checkpoint_path.write_text("\n".join(checkpoint_lines), encoding="utf-8")
+    print(checkpoint_path)
+
+
+def handle_status(args: argparse.Namespace) -> None:
+    _workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
+    theking_dir = get_theking_dir(project_dir)
+    ensure_local_path(theking_dir, project_dir, "theking")
+    session_checkpoint = load_decree_checkpoint(project_dir)
+    active_task_summary = load_active_task_status(project_dir)
+    latest_unfinished_task = None if active_task_summary else find_latest_unfinished_task(project_dir, project_slug)
+
+    lines = [
+        f"Project: {project_slug}",
+        f"Recovery source: {describe_recovery_source(session_checkpoint, active_task_summary, latest_unfinished_task)}",
+    ]
+
+    checkpoint_lines: list[str] = []
+    if session_checkpoint is not None:
+        checkpoint_lines.extend(
+            [
+                "Saved decree checkpoint:",
+                f"- Summary: {session_checkpoint.get('summary', '')}",
+                f"- Phase: {session_checkpoint.get('phase', '')}",
+            ]
+        )
+        flow_value = stringify(session_checkpoint.get("flow", ""))
+        if flow_value:
+            checkpoint_lines.append(f"- Flow: {flow_value}")
+        sprint_value = stringify(session_checkpoint.get("sprint", ""))
+        if sprint_value:
+            checkpoint_lines.append(f"- Sprint: {sprint_value}")
+        task_value = stringify(session_checkpoint.get("task", ""))
+        if task_value:
+            checkpoint_lines.append(f"- Task: {task_value}")
+        checkpoint_lines.append(f"- Next step: {session_checkpoint.get('next_step', '')}")
+
+    if active_task_summary is not None:
+        lines.extend(
+            [
+                "Active task:",
+                f"- ID: {active_task_summary['task_id']}",
+                f"- Status: {active_task_summary['status']}",
+                f"- Task dir: {active_task_summary['task_dir']}",
+                f"- Current review round: {active_task_summary['current_review_round']}",
+                f"- Next step: {active_task_summary['next_step']}",
+            ]
+        )
+        lines.extend(checkpoint_lines)
+    elif latest_unfinished_task is not None:
+        lines.extend(
+            [
+                "Suggested recovery:",
+                f"- Latest unfinished task: {latest_unfinished_task['task_id']} ({latest_unfinished_task['status']})",
+                f"- Task dir: {latest_unfinished_task['task_dir']}",
+                f"- Next step: Activate this task, then {latest_unfinished_task['next_step']}",
+            ]
+        )
+        lines.extend(checkpoint_lines)
+    else:
+        lines.extend(checkpoint_lines)
+        lines.extend(
+            [
+                "Suggested recovery:",
+                "- No active task found.",
+                "- If this session was compacted mid-decree, continue from the checkpoint above.",
+                "- Otherwise start a new /decree or activate an existing unfinished task.",
+            ]
+        )
+
+    print("\n".join(lines))
+
+
 # --- Shared helpers ---
 
 
@@ -800,6 +962,150 @@ def parse_plan_entries(
         "entries": parsed_entries,
         "deps_by_slug": resolved_deps_by_slug,
     }
+
+
+def get_state_dir(project_dir: Path) -> Path:
+    return get_theking_dir(project_dir) / "state"
+
+
+def get_session_dir(project_dir: Path) -> Path:
+    return get_state_dir(project_dir) / "session"
+
+
+def get_decree_checkpoint_path(project_dir: Path) -> Path:
+    return get_session_dir(project_dir) / DEGREE_CHECKPOINT_FILENAME
+
+
+def load_decree_checkpoint(project_dir: Path) -> dict[str, Any] | None:
+    checkpoint_path = get_decree_checkpoint_path(project_dir)
+    ensure_local_path(checkpoint_path, project_dir, "decree checkpoint")
+    if not checkpoint_path.exists():
+        return None
+    ensure_file(checkpoint_path, DEGREE_CHECKPOINT_FILENAME)
+    return parse_frontmatter(checkpoint_path.read_text(encoding="utf-8"))
+
+
+def load_active_task_status(project_dir: Path) -> dict[str, str] | None:
+    active_task_file = get_theking_dir(project_dir) / "active-task"
+    ensure_local_path(active_task_file, project_dir, "active-task")
+    if not active_task_file.exists():
+        return None
+    ensure_file(active_task_file, "active-task")
+    active_task_text = active_task_file.read_text(encoding="utf-8").strip()
+    if not active_task_text:
+        raise WorkflowError("active-task is empty; run workflowctl activate again")
+    task_dir = Path(active_task_text).expanduser()
+    if task_dir.is_symlink():
+        raise WorkflowError(f"active-task must not point to a symlinked task directory: {task_dir}")
+    resolved_task_dir = task_dir.resolve()
+    ensure_local_path(resolved_task_dir, project_dir, "active task")
+    try:
+        task_paths = derive_task_paths(resolved_task_dir)
+        ensure_file(task_paths.task_md, "task.md")
+        task_data, _body = load_task_document(task_paths.task_md)
+    except WorkflowError as error:
+        raise WorkflowError(
+            f"active-task does not point to a valid task directory; run workflowctl activate again. ({error})"
+        ) from error
+    return summarize_task_status(task_paths, task_data)
+
+
+def find_latest_unfinished_task(project_dir: Path, project_slug: str) -> dict[str, str] | None:
+    workflow_project_dir = get_workflow_project_dir(project_dir, project_slug)
+    ensure_local_path(workflow_project_dir, project_dir, "workflow project")
+    if not workflow_project_dir.exists():
+        return None
+    sprints_dir = workflow_project_dir / "sprints"
+    if not sprints_dir.exists():
+        return None
+
+    task_summaries: list[dict[str, str]] = []
+    for sprint_dir in sorted(sprints_dir.iterdir(), key=lambda path: path.name, reverse=True):
+        if sprint_dir.is_symlink() or not sprint_dir.is_dir():
+            continue
+        tasks_dir = sprint_dir / "tasks"
+        if tasks_dir.is_symlink() or not tasks_dir.is_dir():
+            continue
+        for task_dir in sorted(tasks_dir.iterdir(), key=lambda path: path.name):
+            if task_dir.is_symlink() or not task_dir.is_dir():
+                continue
+            try:
+                task_paths = derive_task_paths(task_dir)
+                task_data, _body = load_task_document(task_paths.task_md)
+            except WorkflowError:
+                continue
+            if stringify(task_data["status"]) == "done":
+                continue
+            task_summaries.append(summarize_task_status(task_paths, task_data))
+
+    return task_summaries[0] if task_summaries else None
+
+
+def summarize_task_status(task_paths: Any, task_data: dict[str, Any]) -> dict[str, str]:
+    return {
+        "task_id": stringify(task_data["id"]),
+        "status": stringify(task_data["status"]),
+        "task_dir": task_paths.task_dir.relative_to(task_paths.project_dir).as_posix(),
+        "current_review_round": str(int(task_data["current_review_round"])),
+        "next_step": infer_task_next_step(task_paths, task_data),
+    }
+
+
+def infer_task_next_step(task_paths: Any, task_data: dict[str, Any]) -> str:
+    status = stringify(task_data["status"])
+    task_dir_relative = task_paths.task_dir.relative_to(task_paths.project_dir).as_posix()
+    if status == "blocked":
+        resume_status = infer_blocked_resume_status([stringify(entry) for entry in task_data["status_history"]])
+        if resume_status == "in_review":
+            return (
+                "resolve the blocker, then run "
+                f"workflowctl advance-status --task-dir {task_dir_relative} --to-status in_review "
+                f"to resume review round {int(task_data['current_review_round']):03d}"
+            )
+        return (
+            "resolve the blocker, then run "
+            f"workflowctl advance-status --task-dir {task_dir_relative} --to-status {resume_status}"
+        )
+    if status == "draft":
+        return (
+            "review the task scope and run "
+            f"workflowctl advance-status --task-dir {task_dir_relative} --to-status planned when the task is ready"
+        )
+    if status == "planned":
+        try:
+            validate_spec(task_paths.spec_md, require_content=True)
+        except WorkflowError:
+            return "finish the five spec sections, then write failing tests and advance to red"
+        return f"write failing tests, then run workflowctl advance-status --task-dir {task_dir_relative} --to-status red"
+    if status == "red":
+        return "finish the red-phase tests and minimal implementation needed to reach green"
+    if status == "green":
+        return f"run build/lint/type/unit plus profile verification, capture evidence, then workflowctl init-review-round --task-dir {task_dir_relative}"
+    if status == "in_review":
+        review_labels = ", ".join(label for _review_type, label in review_type_specs_for_task(task_data))
+        return f"continue review round {int(task_data['current_review_round']):03d} and close the {review_labels} findings"
+    if status == "changes_requested":
+        next_round = int(task_data["current_review_round"]) + 1
+        return f"fix the current review findings, add resolved review evidence, then re-enter in_review for round {next_round:03d}"
+    if status == "ready_to_merge":
+        return f"run workflowctl check --task-dir {task_dir_relative} and only then advance the task to done"
+    if status == "done":
+        return "deactivate this task or activate the next unfinished task"
+    return "review the task artifacts and continue from the recorded status"
+
+
+def describe_recovery_source(
+    session_checkpoint: dict[str, Any] | None,
+    active_task_summary: dict[str, str] | None,
+    latest_unfinished_task: dict[str, str] | None,
+) -> str:
+    if active_task_summary is not None:
+        return "active-task"
+    if latest_unfinished_task is not None:
+        return "latest unfinished task"
+    if session_checkpoint is not None:
+        return "decree checkpoint"
+    return "none"
 
 
 def write_task_files(
@@ -878,6 +1184,8 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
     context_dir = theking_dir / "context"
     memory_dir = theking_dir / "memory"
     verification_dir = theking_dir / "verification"
+    state_dir = theking_dir / "state"
+    session_state_dir = state_dir / "session"
     workflows_dir = theking_dir / "workflows"
     runs_dir = theking_dir / "runs"
     manifest_dir = theking_dir / ".manifests"
@@ -905,6 +1213,8 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
         context_dir,
         memory_dir,
         verification_dir,
+        state_dir,
+        session_state_dir,
         workflows_dir,
         runs_dir,
         manifest_dir,

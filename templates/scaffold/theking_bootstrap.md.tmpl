@@ -17,6 +17,7 @@ theking 既是**项目知识库**，也是**工作流治理工具**：
 |------|------|---------|
 | `.theking/context/` | 稳定项目知识：架构、调研、技术选型 | 随项目持续积累 |
 | `.theking/memory/MEMORY.md` | 临时补充记忆，成熟后晋升到 context/ | 定期整理 |
+| `.theking/state/session/` | decree checkpoint 与恢复摘要 | 会话中断时更新 |
 | `.theking/agents/` | agent 定义（canonical authored source） | 随 agent 能力演进 |
 | `.theking/commands/` | 共享命令定义（canonical authored source） | 随工作流演进 |
 | `.theking/skills/` | 项目级 skill（canonical authored source） | 随治理规则演进 |
@@ -75,6 +76,22 @@ theking 既是**项目知识库**，也是**工作流治理工具**：
 👑 [decree] 此旨意走<完整|轻量>流程。
 理由：<基于已查看证据的判断>
 ```
+
+## Compact Recovery
+
+compact、换工具、或长时间中断后，先运行：
+
+```bash
+workflowctl status --project-dir . --project-slug {project_slug}
+```
+
+如果 decree 已经做出分流结论但还没完成 sprint / task 编排，用 checkpoint 持久化后续动作：
+
+```bash
+workflowctl checkpoint --project-dir . --project-slug {project_slug} --phase phase-2-triage --flow <full|lightweight> --summary "<一行摘要>" --next-step "<下一步动作>"
+```
+
+如果已经进入具体 task，则 `status` 会优先告诉你 active task 的 status、review round 和 next step。只有当它明确显示没有 active task、没有 checkpoint、也没有未完成任务时，才开始一条新的 decree。
 
 ## 知识沉淀约定
 

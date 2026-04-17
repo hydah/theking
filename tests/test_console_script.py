@@ -58,6 +58,8 @@ def test_workflowctl_console_script_help_runs() -> None:
     assert result.returncode == 0, result.stderr
     assert "init-project" in result.stdout
     assert "ensure" in result.stdout
+    assert "checkpoint" in result.stdout
+    assert "status" in result.stdout
     assert "advance-status" in result.stdout
     assert "init-review-round" in result.stdout
     assert "pipx install /path/to/theking" in result.stdout
@@ -66,7 +68,7 @@ def test_workflowctl_console_script_help_runs() -> None:
 
 @pytest.mark.parametrize(
     "command",
-    ["ensure", "init-project", "init-sprint", "init-task", "init-sprint-plan", "deactivate"],
+    ["ensure", "init-project", "init-sprint", "init-task", "init-sprint-plan", "deactivate", "checkpoint", "status"],
 )
 def test_workflowctl_root_command_help_mentions_project_root_and_theking_compatibility(command: str) -> None:
     result = run_console_cli([command, "--help"])

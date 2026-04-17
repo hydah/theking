@@ -86,6 +86,16 @@ description: |
 
 **不变的底线**：无论哪种流程，sprint 跟踪、完整 spec、TDD、code-review、基本验证、artifact 校验都不可绕过。
 
+## 中断恢复
+
+任何新会话、compact 后恢复、或切换到另一个 AI 工具时，第一步都不是重新理解需求，而是先恢复当前 decree / task 状态：
+
+```bash
+{theking_cmd} status --project-dir {workflow_root_quoted} --project-slug {project_slug}
+```
+
+如果已经做出分流结论但还没完成 sprint / task 编排，必须把后续动作落到 decree checkpoint；如果已经有 active task，则优先沿 active task 继续。
+
 ## 硬规则
 
 1. **所有需求都有 sprint** — sprint 是最小跟踪单元，不可绕过
@@ -95,6 +105,7 @@ description: |
 5. **没有完整 spec 不进入实现** — 轻量流程也要保留 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 全部 section
 6. **没有基本验证不进入 ready_to_merge/done** — 必须运行与改动相关的 build/lint/type/unit 检查，并补齐执行画像要求的验证；无自动化时需明确记录缺口与最小人工验证
 7. **没有 resolved review 或校验证据不进入 done** — review pair 与 verification evidence 必须完整
+8. **任何 compact 或换工具恢复都先跑 `workflowctl status`** — 先恢复 decree / task 的 durable 状态，再继续执行后续步骤
 
 ## 状态机
 

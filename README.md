@@ -116,6 +116,22 @@ workflowctl check --task-dir .theking/workflows/demo-app/sprints/sprint-001-foun
 
 生成到项目里的权威说明见 `.theking/bootstrap.md` 和 `.theking/skills/workflow-governance/SKILL.md`。
 
+## Compact Recovery
+
+如果会话被 compact、切换到新的 AI 工具，或你不确定 decree 现在做到哪一步，先恢复 durable 状态，而不是重新猜：
+
+```bash
+workflowctl status --project-dir . --project-slug demo-app
+```
+
+如果已经完成分流，但还没创建 sprint / task，把下一步动作写进 decree checkpoint：
+
+```bash
+workflowctl checkpoint --project-dir . --project-slug demo-app --phase phase-2-triage --flow full --summary "修复上传鉴权问题" --next-step "基于 planner 输出创建 sprint 与 tasks"
+```
+
+恢复顺序是：先看 `status` 输出的 active task / latest unfinished task；只有它们都不存在时，再回退到 decree checkpoint。只有当它明确显示没有恢复目标时，才开启新的 decree。
+
 ## 开发这个仓库
 
 仓库开发和测试建议直接用 `uv`：
