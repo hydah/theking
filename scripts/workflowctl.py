@@ -39,6 +39,7 @@ try:
         write_task_files,
     )
     from .validation import (
+        STATUS_NEXT_STEP_HINTS,
         apply_status_transition,
         derive_task_paths,
         ensure_absent,
@@ -102,6 +103,7 @@ except ImportError:
         write_task_files,
     )
     from validation import (
+        STATUS_NEXT_STEP_HINTS,
         apply_status_transition,
         derive_task_paths,
         ensure_absent,
@@ -662,7 +664,20 @@ def handle_init_review_round(args: argparse.Namespace) -> None:
     task_data, body = load_task_document(task_paths.task_md)
     current_status = stringify(task_data["status"])
     if current_status not in {"green", "changes_requested"}:
-        raise WorkflowError("init-review-round requires task status green or changes_requested")
+        if current_status == "in_review":
+            raise WorkflowError(
+                "init-review-round requires task status green or changes_requested. "
+                f"Task is already in_review (round {int(task_data['current_review_round'])}). "
+                "Hint: if the current round is resolved, run "
+                "`workflowctl advance-status --to-status ready_to_merge`. "
+                "Only run init-review-round again AFTER you advance to changes_requested "
+                "and fix code — running it now will force an empty extra round."
+            )
+        raise WorkflowError(
+            "init-review-round requires task status green or changes_requested. "
+            f"Current status: {current_status}. "
+            f"Hint: {STATUS_NEXT_STEP_HINTS.get(current_status, 'advance status first')}"
+        )
 
     updated_task = apply_status_transition(task_data, "in_review")
     round_number = int(updated_task["current_review_round"])
@@ -738,25 +753,40 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
 
     parsed = parse_plan_entries(task_entries, tasks_dir)
 
+    # Two-pass validation: first collect every per-task problem, then report
+    # them all at once. This lets the agent fix multiple broken rows in a
+    # single edit cycle instead of being drip-fed one error per run
+    # (which was the Kimi CLI feedback pain point).
     prepared_entries: list[dict[str, Any]] = []
+    plan_errors: list[str] = []
     for entry in parsed["entries"]:
         task_id = entry["_task_id"]
-        title = normalize_title(require_string(entry["title"], f"Task {task_id} field 'title'"))
-        task_type = normalize_task_type(
-            require_string(entry["task_type"], f"Task {task_id} field 'task_type'")
-        )
-        execution_profile = (
-            normalize_execution_profile(
-                require_string(entry["execution_profile"], f"Task {task_id} field 'execution_profile'")
+        slug = entry["_slug"]
+        try:
+            title = normalize_title(
+                require_string(entry["title"], f"Task {task_id} field 'title'")
             )
-            if "execution_profile" in entry
-            else infer_execution_profile(task_type)
-        )
-        validate_task_contract(task_type, execution_profile)
+            task_type = normalize_task_type(
+                require_string(entry["task_type"], f"Task {task_id} field 'task_type'")
+            )
+            execution_profile = (
+                normalize_execution_profile(
+                    require_string(
+                        entry["execution_profile"],
+                        f"Task {task_id} field 'execution_profile'",
+                    )
+                )
+                if "execution_profile" in entry
+                else infer_execution_profile(task_type)
+            )
+            validate_task_contract(task_type, execution_profile)
+        except WorkflowError as error:
+            plan_errors.append(f"[{slug}] {error}")
+            continue
         verification_profile = infer_verification_profile(execution_profile)
         requires_security_review = task_requires_security_review(task_type, execution_profile)
         required_agents = infer_required_agents(task_type, execution_profile)
-        resolved_deps = parsed["deps_by_slug"][entry["_slug"]]
+        resolved_deps = parsed["deps_by_slug"][slug]
 
         prepared_entries.append(
             {
@@ -772,6 +802,11 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 "spec_hints": entry.get("_spec_hints", {}),
             }
         )
+
+    if plan_errors:
+        header = f"Plan file has {len(plan_errors)} invalid task(s):"
+        bullets = "\n  - ".join(plan_errors)
+        raise WorkflowError(f"{header}\n  - {bullets}")
 
     created_dirs: list[Path] = []
     try:

@@ -627,9 +627,15 @@ def infer_execution_profile(task_type: str) -> str:
     tokens = set(task_type.split(","))
     if tokens & {"frontend", "e2e", "ui", "web"}:
         return "web.browser"
-    if "job" in tokens:
+    if tokens & {"job", "automation"}:
         return "backend.job"
-    if tokens & {"auth", "api", "input", "backend", "service"}:
+    # Note: plain `backend` is intentionally excluded from the HTTP set.
+    # `backend` is ambiguous between "backend library" and "backend server";
+    # we default it to backend.cli (library) and require users to combine
+    # `backend` with `api` / `service` — or set execution_profile explicitly —
+    # when they actually want an HTTP surface. This avoids dragging a
+    # rubber-stamp security-reviewer onto every library task.
+    if tokens & {"auth", "api", "input", "service"}:
         return "backend.http"
     return "backend.cli"
 
@@ -677,17 +683,42 @@ def task_requires_security_review(task_type: str, execution_profile: str) -> boo
 def validate_task_contract(task_type: str, execution_profile: str) -> None:
     tokens = set(task_type.split(","))
     browser_tokens = {"frontend", "e2e", "ui", "web", "auth"}
+    # `backend` is kept here for backward compat (pre-existing tasks that use
+    # backend + backend.http stay valid), but `infer_execution_profile` no
+    # longer maps plain `backend` to backend.http.
     http_tokens = {"auth", "api", "input", "backend", "service"}
     job_tokens = {"job", "automation"}
+    # Tokens that are strictly illegal on backend.cli. `backend` is NOT in this
+    # set — it is ambiguous and the CLI (library) interpretation is valid.
+    cli_forbidden_tokens = (
+        browser_tokens | {"api", "input", "service", "job"}
+    )
+
+    def _hint(profile: str, allowed: set[str]) -> str:
+        tokens_list = ", ".join(sorted(allowed))
+        return (
+            f"task_type is incompatible with execution_profile {profile}. "
+            f"For {profile}, task_type must include at least one of: {tokens_list}. "
+            f"Got task_type={task_type!r}. "
+            "Hint: see `.theking/agents/planner.md` for the task_type × execution_profile matrix."
+        )
 
     if execution_profile == "web.browser" and not (tokens & browser_tokens):
-        raise WorkflowError("task_type is incompatible with execution_profile web.browser")
+        raise WorkflowError(_hint("web.browser", browser_tokens))
     if execution_profile == "backend.http" and not (tokens & http_tokens):
-        raise WorkflowError("task_type is incompatible with execution_profile backend.http")
+        raise WorkflowError(_hint("backend.http", http_tokens))
     if execution_profile == "backend.job" and not (tokens & job_tokens):
-        raise WorkflowError("task_type is incompatible with execution_profile backend.job")
-    if execution_profile == "backend.cli" and (tokens & (browser_tokens | http_tokens | {"job"})):
-        raise WorkflowError("task_type is incompatible with execution_profile backend.cli")
+        raise WorkflowError(_hint("backend.job", job_tokens))
+    if execution_profile == "backend.cli" and (tokens & cli_forbidden_tokens):
+        forbidden = tokens & cli_forbidden_tokens
+        raise WorkflowError(
+            "task_type is incompatible with execution_profile backend.cli. "
+            f"backend.cli forbids task_type tokens: {', '.join(sorted(forbidden))}. "
+            "Use general / backend / cli / tooling / script / automation for CLI tasks, "
+            "or switch execution_profile to the matching profile "
+            "(web.browser / backend.http / backend.job). "
+            "Hint: see `.theking/agents/planner.md` for the task_type × execution_profile matrix."
+        )
 
 
 # --- Path helpers ---
@@ -752,6 +783,37 @@ def load_task_document(task_md: Path) -> tuple[dict[str, Any], str]:
     return validate_task_metadata(task_data), body
 
 
+STATUS_NEXT_STEP_HINTS: dict[str, str] = {
+    "draft": "run `workflowctl advance-status --to-status planned` after writing spec.md",
+    "planned": "write the failing test(s) and run `workflowctl advance-status --to-status red`",
+    "red": "make the tests pass, then `workflowctl advance-status --to-status green`",
+    "green": (
+        "run `workflowctl init-review-round --task-dir <TASK_DIR>` to enter in_review "
+        "(do NOT advance-status directly; init-review-round scaffolds the review files)"
+    ),
+    "in_review": (
+        "after reviewer produces findings: if none, `workflowctl advance-status --to-status "
+        "ready_to_merge`; if there are findings, `advance-status --to-status changes_requested`"
+    ),
+    "changes_requested": (
+        "go back to `red` to add/strengthen tests, then through `green` and re-run "
+        "`workflowctl init-review-round` to open the next round"
+    ),
+    "ready_to_merge": "run `workflowctl advance-status --to-status done`",
+    "done": "this task is terminal; start a new task or close the sprint",
+    "blocked": "resume with `workflowctl advance-status --to-status <previous status>` once unblocked",
+}
+
+
+def _next_step_hint(current_status: str, allowed_moves: list[str]) -> str:
+    primary = STATUS_NEXT_STEP_HINTS.get(current_status)
+    if primary:
+        return primary
+    if allowed_moves:
+        return f"try `workflowctl advance-status --to-status {allowed_moves[0]}`"
+    return "this state has no outgoing transitions"
+
+
 def apply_status_transition(task_data: dict[str, Any], to_status: str) -> dict[str, Any]:
     validated_task = validate_task_metadata(task_data)
     current_status = normalize_status(stringify(validated_task["status"]))
@@ -762,12 +824,23 @@ def apply_status_transition(task_data: dict[str, Any], to_status: str) -> dict[s
     if current_status == "blocked":
         resume_status = infer_blocked_resume_status(validated_task["status_history"])
         if target_status != resume_status:
-            raise WorkflowError("blocked tasks must resume to the prior non-blocked status")
+            raise WorkflowError(
+                "blocked tasks must resume to the prior non-blocked status. "
+                f"Expected next status: {resume_status}. "
+                f"Hint: workflowctl advance-status --to-status {resume_status}"
+            )
     elif target_status == "blocked":
         if current_status == "done":
             raise WorkflowError("done cannot transition to blocked")
     elif target_status not in ALLOWED_TRANSITIONS.get(current_status, set()):
-        raise WorkflowError(f"Illegal status transition: {current_status} -> {target_status}")
+        allowed_moves = sorted(ALLOWED_TRANSITIONS.get(current_status, set()))
+        moves_text = ", ".join(allowed_moves) if allowed_moves else "(terminal state)"
+        hint = _next_step_hint(current_status, allowed_moves)
+        raise WorkflowError(
+            f"Illegal status transition: {current_status} -> {target_status}. "
+            f"From '{current_status}' you can only go to: {moves_text}. "
+            f"Hint: {hint}"
+        )
 
     status_history = [*validated_task["status_history"], target_status]
     updated_task = {

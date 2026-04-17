@@ -1861,3 +1861,49 @@ def test_kimi_subagent_roles_match_canonical_agent_definitions() -> None:
         f"Only in canonical: {canonical_roles - kimi_roles}. "
         f"Only in kimi: {kimi_roles - canonical_roles}."
     )
+
+
+# --- .gitignore scaffold (TASK-003 kimi-feedback sprint) ---
+
+
+def test_init_project_writes_root_gitignore_with_theking_defaults(tmp_path: Path) -> None:
+    """init-project creates a project-root .gitignore with sensible defaults.
+
+    Every project scaffolded by theking should ship with a .gitignore that keeps
+    theking state/backup artifacts and AI session ephemera out of git; the
+    Kimi CLI feedback confirmed this is a 100% miss on greenfield projects
+    otherwise.
+    """
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+
+    gitignore = tmp_path / "demo-app" / ".gitignore"
+    assert gitignore.is_file(), "project root must have a .gitignore after init-project"
+    content = gitignore.read_text(encoding="utf-8")
+    for entry in (".theking/state/", "plan.json", ".env", ".DS_Store"):
+        assert entry in content, (
+            f"default .gitignore must contain '{entry}' — it's a 100% common miss"
+        )
+
+
+def test_init_project_preserves_existing_gitignore(tmp_path: Path) -> None:
+    """If the user already wrote a .gitignore, ensure/init-project must not overwrite it.
+
+    write_if_missing semantics: users own .gitignore, theking only seeds it.
+    """
+    project_dir = tmp_path / "demo-app"
+    project_dir.mkdir()
+    custom = "# user-authored gitignore\nmy-custom-dir/\n"
+    (project_dir / ".gitignore").write_text(custom, encoding="utf-8")
+
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+
+    preserved = (project_dir / ".gitignore").read_text(encoding="utf-8")
+    assert preserved == custom, "existing .gitignore must not be overwritten by theking"

@@ -44,12 +44,71 @@ Your plan output must respect:
 For each task, specify:
 - **slug**: kebab-case identifier
 - **title**: Human-readable name
-- **task_type**: One of general, frontend, e2e, ui, web, auth, input, api, backend, service, cli, tooling, script, automation, job
-- **execution_profile**: web.browser | backend.http | backend.cli | backend.job
+- **task_type**: One of the 15 allowed tokens (see *task_type 决策树* below). Pick from the table; do not invent new tokens (e.g. `feature`).
+- **execution_profile**: `web.browser` | `backend.http` | `backend.cli` | `backend.job`. Must pair with `task_type` per the *兼容矩阵*.
 - **depends_on**: List of task slugs this task depends on
 - **description**: What this task delivers
 - **acceptance**: Specific, testable acceptance criteria
 - **risks**: Potential issues and mitigations
+
+#### task_type 决策树
+
+Pick the token whose scenario row matches the task's primary business intent.
+If nothing matches, default to `general`.
+
+| Scenario | task_type | execution_profile |
+|----------|-----------|-------------------|
+| Pure library / pipeline / framework code with no network exposure | `general` | `backend.cli` |
+| Project scaffolding, config loader, language-specific init (`go.mod`, `pyproject.toml`) | `general` | `backend.cli` |
+| HTTP / gRPC / WebSocket server endpoint, REST API, RPC handler | `api` or `service` | `backend.http` |
+| Authentication / login / token refresh / session management | `auth` | `backend.http` (server) or `web.browser` (UI) |
+| Input validation, request parsing, form submission handlers | `input` | `backend.http` |
+| Background worker, scheduled job, message queue consumer | `job` or `automation` | `backend.job` |
+| Frontend component / page / state store | `frontend` or `ui` or `web` | `web.browser` |
+| End-to-end user flow / cross-service integration test | `e2e` | `web.browser` |
+| Build script, local dev helper, CLI tool, shell-invoked utility | `cli` or `script` or `tooling` | `backend.cli` |
+| **Backend library** that is *called* (not an HTTP endpoint) | `general` (or `backend` + explicit `backend.cli`) | `backend.cli` |
+| Client module that calls *external* APIs (e.g. OpenAI SDK wrapper) | `general` | `backend.cli` |
+
+⚠️ **The token `backend` is ambiguous on its own — prefer `general` / `service` / `api` for clarity.** Plain `backend` token defaults to `backend.cli` (library behavior) via `infer_execution_profile`. If you want an HTTP server, combine `backend` with `api` or `service`, or specify `execution_profile: backend.http` explicitly.
+
+#### task_type × execution_profile 兼容矩阵
+
+`workflowctl` rejects mismatched pairs at `init-sprint-plan` time *and* at every
+`advance-status`. Stick to cells marked ✅ below; ❌ combinations fail validation.
+
+| task_type ↓ / execution_profile → | web.browser | backend.http | backend.cli | backend.job |
+|---|---|---|---|---|
+| `frontend` / `ui` / `web` / `e2e` | ✅ | ❌ | ❌ | ❌ |
+| `auth`                             | ✅ | ✅ | ❌ | ❌ |
+| `api` / `service` / `input`        | ❌ | ✅ | ❌ | ❌ |
+| `backend`                          | ❌ | ✅ (server) | ✅ (library, default) | ❌ |
+| `job` / `automation`               | ❌ | ❌ | ❌ | ✅ |
+| `general` / `cli` / `tooling` / `script` | ❌ | ❌ | ✅ | ❌ |
+
+Rules of thumb when the cell is ambiguous:
+- **Need a listener on a port?** → `backend.http` (pick `api` or `service`).
+- **Purely in-process / CLI-invoked / consumed as a library?** → `backend.cli`.
+- **Triggered by a queue or cron?** → `backend.job` (pick `job` or `automation`).
+
+#### requires_security_review 自动推断规则
+
+`requires_security_review` is **derived**, not user-supplied. You cannot turn it
+off by editing `task.md`; `workflowctl check` will reject that. The derivation:
+
+| Condition | `requires_security_review` | Reason |
+|-----------|---------------------------|--------|
+| `execution_profile == backend.http` | **true** (always) | External attack surface |
+| `task_type` contains `auth` | **true** | Credentials / tokens |
+| `task_type` contains `input` | **true** | Untrusted user input |
+| `task_type` contains `api` | **true** | API contract / rate limits |
+| Otherwise | false | — |
+
+**Corollary**: if a task logically has **no** security surface (pure pipeline
+library, pure math, internal dev tool), do **not** force `task_type=api` or
+`execution_profile=backend.http` just because "it feels backend-ish". Use
+`general` + `backend.cli`; otherwise you will be forced to produce a
+rubber-stamp security-review round that adds no signal.
 
 ### 4. Dependency Graph
 - Identify which tasks can run in parallel

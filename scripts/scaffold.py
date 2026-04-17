@@ -628,6 +628,15 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
     # --- Shared template variables ---
     tmpl_vars = build_runtime_template_vars(project_slug)
 
+    # Seed a project-root .gitignore (write_if_missing — users own this file).
+    # Keeps theking state/backups, plan.json scratch copies, env secrets, and
+    # OS noise out of git by default. Seeded early so later scaffold steps do
+    # not race with IDEs that might create stale .gitignore placeholders.
+    write_if_missing(
+        project_dir / ".gitignore",
+        read_template_raw("gitignore.tmpl"),
+    )
+
     write_if_missing(
         theking_dir / "README.md",
         render_template(

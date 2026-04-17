@@ -7,8 +7,17 @@ dist/
 .DS_Store
 
 .claude/
+.codebuddy/
 .github/
+.kimi/
 .theking/
+
+# Runtime entry files projected by `workflowctl ensure` when theking is used
+# on itself (dogfooding). theking is the template source repo; these are
+# consumer-side artifacts that shouldn't be committed back here.
+/AGENTS.md
+/CLAUDE.md
+/CODEBUDDY.md
 
 /theking
 ref

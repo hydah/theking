@@ -566,6 +566,11 @@ def test_init_task_assigns_required_agents_by_task_type_and_execution_profile(
         ("frontend", "web.browser"),
         ("api", "backend.http"),
         ("general", "backend.cli"),
+        # TASK-004 of kimi-feedback sprint: `backend` alone means "library code",
+        # so it must default to backend.cli, not backend.http.
+        ("backend", "backend.cli"),
+        # `service` still signals an HTTP/RPC server; unchanged.
+        ("service", "backend.http"),
     ],
 )
 def test_init_task_infers_execution_profile_from_task_type(

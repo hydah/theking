@@ -1,0 +1,23 @@
+# Project-root .gitignore seeded by theking `init-project` / `ensure`.
+# theking only writes this file if it does not already exist — users own it.
+# Add language- or tool-specific patterns below as needed.
+
+# --- theking workflow artifacts ---
+.theking/state/
+.theking/.backups/
+
+# --- AI / agent ephemera ---
+# plan.json is sprint-scoped; the canonical copy lives under
+# .theking/workflows/<slug>/sprints/<sprint>/plan.json, so a stray plan.json
+# at the project root is almost always a scratch file not meant for git.
+plan.json
+
+# --- secrets and env files ---
+.env
+.env.local
+.env.*.local
+
+# --- general build / IDE / OS noise ---
+*.log
+.DS_Store
+Thumbs.db
