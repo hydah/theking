@@ -9,6 +9,34 @@ description: |
 
 本 skill 定义 {project_title} 的开发工作流纪律。所有 AI agent 在执行编码任务时必须遵守以下规则。
 
+## ⛔ 硬规则 — 在做任何事之前先读这里
+
+**以下规则是绝对优先级。违反任何一条 = 交付无效。**
+
+**必须执行的 8 条门禁（无例外）：**
+
+1. **创建 sprint 后才能写代码** — 收到任务后，第一个 tool call 不是文件编辑工具（`replace_in_file` / `write_to_file` / `Edit` / `Write` 等）。第一个 tool call 要么是搜索/阅读代码（初勘），要么是 `{theking_cmd} ensure`（建 sprint）。**如果你发现自己在没有 active task 的情况下修改了源代码文件（.go / .ts / .tsx / .js / .jsx / .py / .rs / .java / .css / .html 等），立刻停止，回去建 sprint。**
+2. **先审上下文，再做分流** — 禁止仅凭需求描述判断。必须先搜索 + 阅读相关代码，输出初勘结果，再宣告流程级别。
+3. **先写 spec，再写代码** — `spec.md` 的 Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须填写后，才能开始实现。
+4. **先红后绿（TDD）** — 召 tdd-guide agent 先写测试，再写实现。禁止实现代码先于测试代码存在。
+5. **每次改动必须 review** — 召 code-reviewer agent。auth/input/api 或 backend.http 任务额外召 security-reviewer。
+6. **没有 build/test 通过不进入 review** — 运行 build/lint/type/unit 检查，输出证据。
+7. **没有 review pair 不进入 done** — `review/code-review-round-NNN.md` + `.resolved.md` 必须完整。
+8. **compact/换工具先跑 `{theking_cmd} status`** — 恢复状态，不要重新发起。
+
+**自检清单 — 在每个 Phase 转换时强制过一遍：**
+
+```
+Phase 1 → 2: 是否已输出初勘结果（已查看/影响面/风险标签）？
+Phase 2 → 3: 是否已运行 {theking_cmd} ensure + init-sprint + init-task？
+Phase 3 → 4: task.md 存在吗？spec.md 填完了吗？status 是 planned 了吗？
+Phase 4 实现中: 是否先召了 tdd-guide？是否测试先于实现？
+Phase 4 → review: build/test 通过了吗？
+review → done: review pair 完整吗？{theking_cmd} check 通过了吗？
+```
+
+---
+
 ## 核心原则
 
 **所有需求都通过 sprint 跟踪**，无论大小。区别在于流程轻重，不在于是否跟踪。
@@ -96,16 +124,9 @@ description: |
 
 如果已经做出分流结论但还没完成 sprint / task 编排，必须把后续动作落到 decree checkpoint；如果已经有 active task，则优先沿 active task 继续。
 
-## 硬规则
+## 硬规则（详见文档顶部 ⛔ 节）
 
-1. **所有需求都有 sprint** — sprint 是最小跟踪单元，不可绕过
-2. **先审上下文，再做分流** — 禁止仅凭需求描述、文件数猜测或主观“简单/复杂”判流程
-3. **先红后绿** — 实现前先启动 tdd-guide（门下侍中），必要时补 e2e-runner（兵部尚书）
-4. **每次改动必须 review** — 御史大夫（code-reviewer）是必经之路；触及 auth/input/api 或 `backend.http` 画像任务，额外召刑部尚书（security-reviewer）
-5. **没有完整 spec 不进入实现** — 轻量流程也要保留 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 全部 section
-6. **没有基本验证不进入 ready_to_merge/done** — 必须运行与改动相关的 build/lint/type/unit 检查，并补齐执行画像要求的验证；无自动化时需明确记录缺口与最小人工验证
-7. **没有 resolved review 或校验证据不进入 done** — review pair 与 verification evidence 必须完整
-8. **任何 compact 或换工具恢复都先跑 `workflowctl status`** — 先恢复 decree / task 的 durable 状态，再继续执行后续步骤
+顶部 8 条门禁是权威定义，此处不再重复。
 
 ## 状态机
 

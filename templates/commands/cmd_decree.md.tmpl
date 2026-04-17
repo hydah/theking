@@ -119,6 +119,15 @@ description: "皇帝下旨 — 从需求到交付的全流程编排。用法：/
 
 **✅ 检查点：sprint 和 task 已创建，才能进入 Phase 4。**
 
+**⛔ 门禁自检 — 进入 Phase 4 前必须全部为真：**
+- [ ] `{theking_cmd} ensure` 已执行
+- [ ] `init-sprint` + `init-task`（或 `init-sprint-plan`）已执行，task 目录已存在
+- [ ] `{theking_cmd} activate --task-dir <TASK_DIR>` 已执行
+- [ ] `spec.md` 已填写全部 section（Scope / Non-Goals / Acceptance / Test Plan / Edge Cases）
+- [ ] task status 已推进到 `planned`
+
+**如果上述任何一条为假，禁止调用文件编辑工具（`replace_in_file` / `write_to_file` / `Edit` / `Write` 等）修改源代码文件（.go / .ts / .tsx / .js / .jsx / .py / .rs / .java / .css / .html 等）。**
+
 `init-sprint` 与 `init-sprint-plan` 都会自动刷新 decree checkpoint（`phase: phase-3-planning`），并在创建完 task 后打印 NEXT STEP 提示。如果你需要手动覆写 summary / next-step，可以再显式调用一次：
 
 ```bash
