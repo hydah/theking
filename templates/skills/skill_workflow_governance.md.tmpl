@@ -41,7 +41,7 @@ Phase 5 内: sprint 级全量回归过了？refactor-cleaner 改动后的 build+
 
 ---
 
-## 核心原则
+## 🏵 核心原则
 
 **所有需求都通过 sprint 跟踪**，无论大小。区别在于流程轻重，不在于是否跟踪。
 
@@ -49,7 +49,7 @@ Phase 5 内: sprint 级全量回归过了？refactor-cleaner 改动后的 build+
 
 **轻量流程只减少规划开销，不降低交付标准。** spec、TDD、review、构建/测试/验证、check/sprint-check 的底线一致。
 
-## 分流决策（完成最小上下文初勘后）
+## ⚖️ 分流决策（完成最小上下文初勘后）
 
 收到任务后，先完成最小上下文初勘，再评估流程级别。最小上下文初勘至少包括：
 
@@ -118,7 +118,7 @@ Phase 5 内: sprint 级全量回归过了？refactor-cleaner 改动后的 build+
 
 **不变的底线**：无论哪种流程，sprint 跟踪、完整 spec、TDD、code-review、基本验证、artifact 校验都不可绕过。
 
-## 中断恢复
+## 🧭 中断恢复
 
 任何新会话、compact 后恢复、或切换到另一个 AI 工具时，第一步都不是重新理解需求，而是先恢复当前 decree / task 状态：
 
@@ -128,11 +128,11 @@ Phase 5 内: sprint 级全量回归过了？refactor-cleaner 改动后的 build+
 
 如果已经做出分流结论但还没完成 sprint / task 编排，必须把后续动作落到 decree checkpoint；如果已经有 active task，则优先沿 active task 继续。
 
-## 硬规则（详见文档顶部 ⛔ 节）
+## ⛔ 硬规则（详见文档顶部 ⛔ 节）
 
 顶部 8 条门禁是权威定义，此处不再重复。
 
-## 状态机
+## 🔁 状态机
 
 ```
 draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
@@ -142,7 +142,7 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 任何状态(除 done) 可进入 blocked，必须回到进入前的状态
 ```
 
-## 操作顺序
+## 🗺️ 施政次第（操作顺序）
 
 ### 完整流程
 
@@ -160,7 +160,7 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 4. **Task 执行**：activate → 写完整 spec 模板（可短写，不可缺节）→ TDD red/green → build/lint/type/unit + 画像验证 → commit → review → check → done
 5. **Sprint 收尾**：sprint-check → **sprint 级全量回归**（即便只有 1 个 task，也要跑整体 build+test 防止跨模块副作用）→ 按需知识提炼 → deactivate
 
-### workflowctl 命令参考
+### 📋 workflowctl 命令参考
 
 以下命令默认在项目根目录执行，并使用已安装到 PATH 的 `workflowctl` 命令。优先把 `--project-dir` 传项目根目录 `.`；`--project-dir` 要求项目目录名和 `--project-slug` 精确一致。旧脚本仍可继续使用 `--root <项目父目录>`，如果你手上只有 `.theking/` 路径，传 `--project-dir .theking` 即可。
 
@@ -183,7 +183,7 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 {theking_cmd} sprint-check --sprint-dir <SPRINT_DIR>
 ```
 
-## Review Loop
+## 🔁 Review Loop · 复核闭环
 
 - reviewer 产出 `review/code-review-round-NNN.md`（必须包含 `## Context` 和 `## Findings`）
 - 修改者产出 `review/code-review-round-NNN.resolved.md`（必须包含 `## Fixes` 和 `## Verification`）
@@ -191,7 +191,9 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 - `requires_security_review: true` 时额外需要 security-review pair
 - `web.browser` 画像任务额外需要 e2e-review pair
 
-## Agent 触发表
+## 🏛️ 朝廷执事表（Agent 触发规则）
+
+各部寺自有职司，请跟定序宊，不得胡乱交使。表中封号与 `/decree` 模板、项目 `agents/` 评语保持一致。
 
 | Agent | 封号 | 出处 | 触发时机 | 是否必须 |
 |-------|------|------|---------|---------|
@@ -206,7 +208,7 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
 | doc-updater | 礼部尚书 | 礼部 | Sprint 结束后 | 按需 |
 | refactor-cleaner | 吏部尚书 | 吏部 | 代码清理阶段 | 按需 |
 
-### 朝廷架构
+### 🏰 朝廷架构
 
 ```
               👑 皇帝（/decree）
@@ -231,7 +233,7 @@ draft -> planned -> red -> green -> in_review -> ready_to_merge -> done
                     └─ 工部（build-error-resolver）排障修复
 ```
 
-## Artifact 合同
+## 📂 Artifact 合同
 
 ```text
 .theking/workflows/{project_slug}/
