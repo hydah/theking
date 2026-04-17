@@ -515,3 +515,182 @@ def test_init_sprint_plan_preserves_existing_task_overview_rows(tmp_path: Path) 
     ).read_text(encoding="utf-8")
     assert "TASK-001-task-a" in sprint_text
     assert "TASK-002-task-b" in sprint_text
+
+
+def test_init_sprint_plan_prints_next_step_prompt(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {
+            "tasks": [
+                {"slug": "task-a", "title": "Task A", "task_type": "general"},
+                {"slug": "task-b", "title": "Task B", "task_type": "general"},
+            ]
+        },
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--project-dir",
+            str(tmp_path / "demo-app"),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Created 2 task(s) in 'draft'" in result.stdout
+    assert "workflowctl activate --task-dir" in result.stdout
+    assert "TASK-001-task-a" in result.stdout
+    assert "--to-status planned" in result.stdout
+
+
+def test_init_sprint_plan_writes_decree_checkpoint(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {"tasks": [{"slug": "task-a", "title": "Task A", "task_type": "general"}]},
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--project-dir",
+            str(tmp_path / "demo-app"),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    checkpoint = tmp_path / "demo-app" / ".theking" / "state" / "session" / "decree-session.md"
+    assert checkpoint.is_file(), "decree-session.md should be auto-written"
+    content = checkpoint.read_text(encoding="utf-8")
+    assert 'phase: "phase-3-planning"' in content
+    assert 'sprint: "sprint-001-foundation"' in content
+    assert 'task: "TASK-001-task-a"' in content
+
+
+def test_init_sprint_plan_seeds_spec_from_hint_fields(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {
+            "tasks": [
+                {
+                    "slug": "task-a",
+                    "title": "Task A",
+                    "task_type": "general",
+                    "scope": ["Do thing X in file Y"],
+                    "non_goals": ["Do not refactor Z"],
+                    "acceptance": ["`go build ./...` passes", "No AKID strings remain"],
+                    "edge_cases": ["Empty env var should stay empty"],
+                }
+            ]
+        },
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--project-dir",
+            str(tmp_path / "demo-app"),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    spec_md = (
+        workflow_root(tmp_path)
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-task-a"
+        / "spec.md"
+    )
+    content = spec_md.read_text(encoding="utf-8")
+    assert "- Do thing X in file Y" in content
+    assert "- Do not refactor Z" in content
+    assert "- [ ] `go build ./...` passes" in content
+    assert "- [ ] No AKID strings remain" in content
+    assert "- Empty env var should stay empty" in content
+
+
+def test_init_sprint_plan_rejects_non_list_spec_hint(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {
+            "tasks": [
+                {
+                    "slug": "task-a",
+                    "title": "Task A",
+                    "task_type": "general",
+                    "scope": "not a list",
+                }
+            ]
+        },
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "must be a list of strings" in result.stderr
+
+
+def test_init_sprint_writes_decree_checkpoint(tmp_path: Path) -> None:
+    run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    result = run_cli(
+        [
+            "init-sprint",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--theme",
+            "foundation",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    checkpoint = tmp_path / "demo-app" / ".theking" / "state" / "session" / "decree-session.md"
+    assert checkpoint.is_file(), "init-sprint should auto-write decree checkpoint"
+    content = checkpoint.read_text(encoding="utf-8")
+    assert 'phase: "phase-3-planning"' in content
+    assert 'sprint: "sprint-001-foundation"' in content
+

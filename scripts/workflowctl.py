@@ -462,6 +462,21 @@ def handle_init_sprint(args: argparse.Namespace) -> None:
     )
     print(sprint_md)
 
+    existing_checkpoint = load_decree_checkpoint(project_dir) or {}
+    write_decree_checkpoint(
+        project_dir=project_dir,
+        project_slug=project_slug,
+        summary=stringify(existing_checkpoint.get("summary", "")) or f"Sprint {sprint_name} created",
+        phase="phase-3-planning",
+        next_step=(
+            f"run `workflowctl init-sprint-plan --sprint {sprint_name} --plan-file plan.json` "
+            f"or `workflowctl init-task --sprint {sprint_name} ...` to create tasks, "
+            "then activate the first task and write spec.md"
+        ),
+        flow=stringify(existing_checkpoint.get("flow", "")),
+        sprint=sprint_name,
+    )
+
 
 def handle_init_task(args: argparse.Namespace) -> None:
     _workspace_root, project_dir, project_slug = resolve_project_context(
@@ -681,6 +696,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 "requires_security_review": requires_security_review,
                 "required_agents": required_agents,
                 "depends_on": resolved_deps,
+                "spec_hints": entry.get("_spec_hints", {}),
             }
         )
 
@@ -710,6 +726,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 requires_security_review=entry["requires_security_review"],
                 required_agents=entry["required_agents"],
                 depends_on=entry["depends_on"],
+                spec_hints=entry.get("spec_hints") or None,
             )
 
         update_sprint_overview(sprint_dir / "sprint.md")
@@ -720,6 +737,36 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
 
     for task_dir in created_dirs:
         print(task_dir)
+
+    existing_checkpoint = load_decree_checkpoint(project_dir) or {}
+    first_task_dir = created_dirs[0]
+    first_task_id = prepared_entries[0]["task_id"]
+    first_task_rel = first_task_dir.relative_to(project_dir).as_posix()
+    write_decree_checkpoint(
+        project_dir=project_dir,
+        project_slug=project_slug,
+        summary=stringify(existing_checkpoint.get("summary", ""))
+        or f"Sprint {sprint_name} planned with {len(created_dirs)} task(s)",
+        phase="phase-3-planning",
+        next_step=(
+            f"activate {first_task_rel}, write spec.md, then "
+            f"`workflowctl advance-status --task-dir {first_task_rel} --to-status planned`"
+        ),
+        flow=stringify(existing_checkpoint.get("flow", "")),
+        sprint=sprint_name,
+        task_id=first_task_id,
+        task_dir_relative=first_task_rel,
+    )
+
+    print("")
+    print(f"Created {len(created_dirs)} task(s) in 'draft'. NEXT STEP:")
+    print(f"  workflowctl activate --task-dir {first_task_rel}")
+    print("  # Write spec.md (Scope / Non-Goals / Acceptance / Test Plan / Edge Cases), then:")
+    print(
+        f"  workflowctl advance-status --task-dir {first_task_rel} --to-status planned"
+    )
+    print("Tasks stay in 'draft' until you explicitly advance them.")
+    print("`workflowctl deactivate` refuses to exit while the active task is non-terminal.")
 
 
 def handle_sprint_check(args: argparse.Namespace) -> None:
@@ -810,15 +857,52 @@ def handle_ensure(args: argparse.Namespace) -> None:
     print(f"OK {theking_dir}")
 
 
+def write_decree_checkpoint(
+    *,
+    project_dir: Path,
+    project_slug: str,
+    summary: str,
+    phase: str,
+    next_step: str,
+    flow: str = "",
+    sprint: str = "",
+    task_id: str = "",
+    task_dir_relative: str = "",
+) -> Path:
+    """Persist a decree checkpoint. Returns the checkpoint file path."""
+
+    checkpoint_path = get_decree_checkpoint_path(project_dir)
+    ensure_local_path(checkpoint_path, project_dir, "decree checkpoint")
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_lines = [
+        "---",
+        f"project_slug: {serialize_frontmatter_string(project_slug)}",
+        f"summary: {serialize_frontmatter_string(summary.strip())}",
+        f"phase: {serialize_frontmatter_string(phase.strip())}",
+        f"next_step: {serialize_frontmatter_string(next_step.strip())}",
+        f"updated_at: {serialize_frontmatter_string(datetime.now(timezone.utc).isoformat())}",
+    ]
+    if flow:
+        checkpoint_lines.append(f"flow: {serialize_frontmatter_string(flow)}")
+    if sprint:
+        checkpoint_lines.append(f"sprint: {serialize_frontmatter_string(sprint)}")
+    if task_id:
+        checkpoint_lines.append(f"task: {serialize_frontmatter_string(task_id)}")
+    if task_dir_relative:
+        checkpoint_lines.append(f"task_dir: {serialize_frontmatter_string(task_dir_relative)}")
+    checkpoint_lines.extend(["---", ""])
+
+    checkpoint_path.write_text("\n".join(checkpoint_lines), encoding="utf-8")
+    return checkpoint_path
+
+
 def handle_checkpoint(args: argparse.Namespace) -> None:
     _workspace_root, project_dir, project_slug = resolve_project_context(
         args.project_slug,
         project_dir_value=args.project_dir,
         root_value=args.root,
     )
-    checkpoint_path = get_decree_checkpoint_path(project_dir)
-    ensure_local_path(checkpoint_path, project_dir, "decree checkpoint")
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     sprint_name = normalize_sprint_name(args.sprint) if args.sprint else ""
     task_id = ""
@@ -838,25 +922,17 @@ def handle_checkpoint(args: argparse.Namespace) -> None:
             raise WorkflowError("--sprint must match the sprint that owns --task-dir")
         sprint_name = task_paths.sprint_dir.name
 
-    checkpoint_lines = [
-        "---",
-        f"project_slug: {serialize_frontmatter_string(project_slug)}",
-        f"summary: {serialize_frontmatter_string(args.summary.strip())}",
-        f"phase: {serialize_frontmatter_string(args.phase.strip())}",
-        f"next_step: {serialize_frontmatter_string(args.next_step.strip())}",
-        f"updated_at: {serialize_frontmatter_string(datetime.now(timezone.utc).isoformat())}",
-    ]
-    if args.flow:
-        checkpoint_lines.append(f"flow: {serialize_frontmatter_string(args.flow)}")
-    if sprint_name:
-        checkpoint_lines.append(f"sprint: {serialize_frontmatter_string(sprint_name)}")
-    if task_id:
-        checkpoint_lines.append(f"task: {serialize_frontmatter_string(task_id)}")
-    if task_dir_relative:
-        checkpoint_lines.append(f"task_dir: {serialize_frontmatter_string(task_dir_relative)}")
-    checkpoint_lines.extend(["---", ""])
-
-    checkpoint_path.write_text("\n".join(checkpoint_lines), encoding="utf-8")
+    checkpoint_path = write_decree_checkpoint(
+        project_dir=project_dir,
+        project_slug=project_slug,
+        summary=args.summary,
+        phase=args.phase,
+        next_step=args.next_step,
+        flow=args.flow or "",
+        sprint=sprint_name,
+        task_id=task_id,
+        task_dir_relative=task_dir_relative,
+    )
     print(checkpoint_path)
 
 
@@ -936,6 +1012,37 @@ def handle_status(args: argparse.Namespace) -> None:
 # --- Shared helpers ---
 
 
+def extract_spec_hints(entry: dict[str, Any], task_id: str) -> dict[str, list[str]]:
+    """Extract optional spec seed fields from a plan entry.
+
+    Recognised keys: scope, non_goals, acceptance, edge_cases. Each must be a list of
+    strings. Returns an empty dict if no hints are supplied.
+    """
+
+    hints: dict[str, list[str]] = {}
+    for key in ("scope", "non_goals", "acceptance", "edge_cases"):
+        if key not in entry:
+            continue
+        raw = entry[key]
+        if not isinstance(raw, list):
+            raise WorkflowError(
+                f"Task {task_id} field '{key}' must be a list of strings when provided"
+            )
+        items: list[str] = []
+        for index, item in enumerate(raw):
+            text = stringify(item).strip()
+            if not text:
+                continue
+            if "\n" in text:
+                raise WorkflowError(
+                    f"Task {task_id} field '{key}' item {index} must be a single line"
+                )
+            items.append(text)
+        if items:
+            hints[key] = items
+    return hints
+
+
 def parse_plan_entries(
     task_entries: list[Any],
     tasks_dir: Path,
@@ -959,7 +1066,15 @@ def parse_plan_entries(
         task_number = base_number + index
         task_id = f"TASK-{task_number:03d}-{task_slug}"
         slug_to_task_id[task_slug] = task_id
-        parsed_entries.append({**entry, "_task_id": task_id, "_slug": task_slug})
+        spec_hints = extract_spec_hints(entry, task_id)
+        parsed_entries.append(
+            {
+                **entry,
+                "_task_id": task_id,
+                "_slug": task_slug,
+                "_spec_hints": spec_hints,
+            }
+        )
 
     resolved_deps_by_slug: dict[str, list[str]] = {}
     for entry in parsed_entries:
@@ -1146,6 +1261,7 @@ def write_task_files(
     requires_security_review: bool,
     required_agents: list[str],
     depends_on: list[str],
+    spec_hints: dict[str, list[str]] | None = None,
 ) -> None:
     """Write task.md and spec.md into a task directory."""
     depends_on_block = (
@@ -1171,13 +1287,58 @@ def write_task_files(
 
     spec_md = task_dir / "spec.md"
     spec_md.write_text(
-        render_template(
-            "spec.md.tmpl",
-            task_title=title,
+        render_spec_markdown(
+            title=title,
             test_plan=default_test_plan(execution_profile),
+            hints=spec_hints,
         ),
         encoding="utf-8",
     )
+
+
+def render_spec_markdown(
+    *,
+    title: str,
+    test_plan: str,
+    hints: dict[str, list[str]] | None,
+) -> str:
+    """Render spec.md. If no hints provided, fall back to the legacy placeholder template."""
+
+    if not hints:
+        return render_template(
+            "spec.md.tmpl",
+            task_title=title,
+            test_plan=test_plan,
+        )
+
+    def bullets(key: str, fallback_comment: str) -> str:
+        items = [item.strip() for item in hints.get(key, []) if str(item).strip()]
+        if not items:
+            return f"<!-- {fallback_comment} -->"
+        return "\n".join(f"- {item}" for item in items)
+
+    def checklist(key: str, fallback_comment: str) -> str:
+        items = [item.strip() for item in hints.get(key, []) if str(item).strip()]
+        if not items:
+            return f"- [ ] <!-- {fallback_comment} -->"
+        return "\n".join(f"- [ ] {item}" for item in items)
+
+    return (
+        f"# {title} Spec\n\n"
+        "<!-- All sections below are required, even for lightweight tasks.\n"
+        "     Brevity is allowed; omission is not. -->\n\n"
+        "## Scope\n"
+        f"{bullets('scope', 'Define the smallest deliverable that can pass review.')}\n\n"
+        "## Non-Goals\n"
+        f"{bullets('non_goals', 'Explicitly state what this task does NOT cover.')}\n\n"
+        "## Acceptance\n"
+        f"{checklist('acceptance', 'Specific, testable criterion. Each should be independently verifiable.')}\n\n"
+        "## Test Plan\n"
+        f"{test_plan}\n\n"
+        "## Edge Cases\n"
+        f"{bullets('edge_cases', 'List boundary conditions, error scenarios, and unusual inputs to handle.')}\n"
+    )
+
 
 
 def update_sprint_overview(
