@@ -67,7 +67,7 @@ skills/theking/
 
 - 安装一个受管理的副本到 `~/.agents/skills/theking`
 - 安装 `workflowctl` 到 `~/.local/bin/workflowctl`
-- 安装 helper wrapper 到 PATH：`theking-install`（自更新入口）
+- 安装 helper wrapper 到 PATH：`theking-install`（在任意目录重新安装当前版本）
 - 如果检测到你已经有 `~/.claude` 或 `~/.codebuddy`，会询问是否也把 skill 暴露到对应的 `skills/theking` 目录
 - **不会**自动修改 `~/.zshrc` / `~/.bashrc`；如果 `~/.local/bin` 不在 PATH 中，脚本会打印提示
 
@@ -80,13 +80,15 @@ skills/theking/
 ./install.sh --force
 ```
 
-如果你更偏好独立工具安装，也仍然可以把 `workflowctl` 当成独立 CLI 安装，不依赖系统自带的旧版 `pip` 或旧版 Python：
+如果你只需要 `workflowctl` 命令行工具，不需要 AI 工具投影（`~/.claude/skills/`、`~/.codebuddy/skills/`），可以用 pipx 或 uv 安装到独立的隔离环境：
 
 ```bash
 pipx install /path/to/theking
 # 或
 uv tool install /path/to/theking
 ```
+
+这种方式的好处是依赖隔离（不污染系统 Python），且支持标准升级流程（`pipx upgrade theking` / `uv tool upgrade theking`）。
 
 如果你只是想一次性试跑，不想先安装到 PATH：
 
