@@ -29,14 +29,14 @@ Usage:
 
 Options:
   --ensure      Also run 'workflowctl ensure' on theking project itself
-  --pip        Use pip instead of uv for installation
   --reinstall   Force reinstallation
   --help        Show this help message
+
+Requires: uv (https://docs.astral.sh/uv/getting-started/installation/)
 
 Examples:
   ./dogfood.sh                  # Quick install/update with uv
   ./dogfood.sh --ensure         # Install and ensure theking project itself
-  ./dogfood.sh --pip           # Use pip instead of uv
   ./dogfood.sh --reinstall     # Force reinstall
 
 EOF
@@ -44,7 +44,6 @@ EOF
 
 # Parse arguments
 RUN_ENSURE=false
-USE_PIP=false
 REINSTALL_FLAG=""
 
 while [[ $# -gt 0 ]]; do
@@ -53,12 +52,8 @@ while [[ $# -gt 0 ]]; do
             RUN_ENSURE=true
             shift
             ;;
-        --pip)
-            USE_PIP=true
-            shift
-            ;;
         --reinstall)
-            REINSTALL_FLAG="--force-reinstall"
+            REINSTALL_FLAG="--reinstall"
             shift
             ;;
         --help|-h)
@@ -73,16 +68,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Detect package manager
-detect_package_manager() {
-    if command -v uv &> /dev/null; then
-        echo "uv"
-    elif command -v pipx &> /dev/null; then
-        echo "pipx"
-    elif command -v pip &> /dev/null; then
-        echo "pip"
-    else
-        echo ""
+# Require uv — no fallback to pip/pipx
+require_uv() {
+    if ! command -v uv &> /dev/null; then
+        error "uv is required but not found on PATH."
+        error ""
+        error "Install uv:"
+        error "  curl -LsSf https://astral.sh/uv/install.sh | sh"
+        error ""
+        error "Or see: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
     fi
 }
 
@@ -90,17 +85,11 @@ detect_package_manager() {
 install_with_uv() {
     info "Installing theking with uv..."
 
-    # Check if uv is available
-    if ! command -v uv &> /dev/null; then
-        error "uv not found. Please install uv first: https://docs.astral.sh/uv/getting-started/installation/"
-        exit 1
-    fi
-
     cd "${PROJECT_DIR}"
 
     # Sync the project (installs dependencies and the package in editable mode)
     info "Running 'uv sync' to install theking in editable mode..."
-    uv sync ${REINSTALL_FLAG}
+    uv sync ${REINSTALL_FLAG:+"$REINSTALL_FLAG"}
 
     # Ensure the workflowctl command is available
     if uv run workflowctl --help &> /dev/null; then
@@ -112,36 +101,6 @@ install_with_uv() {
     info "Installation complete! You can now use:"
     info "  uv run workflowctl --help"
     info "Or activate the virtual environment: source .venv/bin/activate"
-}
-
-# Install with pip
-install_with_pip() {
-    info "Installing theking with pip..."
-
-    cd "${PROJECT_DIR}"
-
-    # Install in editable mode
-    pip install -e . ${REINSTALL_FLAG}
-
-    info "Installation complete! workflowctl should now be available in your PATH."
-}
-
-# Install with pipx
-install_with_pipx() {
-    info "Installing theking with pipx..."
-
-    cd "${PROJECT_DIR}"
-
-    # Uninstall first if already installed
-    if pipx list | grep -q theking; then
-        info "Uninstalling existing theking installation..."
-        pipx uninstall theking
-    fi
-
-    # Install in editable mode
-    pipx install --editable . ${REINSTALL_FLAG}
-
-    info "Installation complete! workflowctl should now be available in your PATH."
 }
 
 # Run workflowctl ensure on theking project itself
@@ -176,32 +135,8 @@ main() {
     info "Starting theking dogfood installation..."
     info "Project directory: ${PROJECT_DIR}"
 
-    if [[ "${USE_PIP}" == true ]]; then
-        install_with_pip
-    else
-        # Try uv first, then pipx, then pip
-        local PM
-        PM=$(detect_package_manager)
-
-        case "${PM}" in
-            uv)
-                install_with_uv
-                ;;
-            pipx)
-                install_with_pipx
-                ;;
-            pip)
-                warn "uv not found, falling back to pip."
-                install_with_pip
-                ;;
-            *)
-                error "No suitable package manager found."
-                error "Please install uv (recommended): https://docs.astral.sh/uv/getting-started/installation/"
-                error "Or install pipx: https://pypa.github.io/pipx/"
-                exit 1
-                ;;
-        esac
-    fi
+    require_uv
+    install_with_uv
 
     # Run ensure if requested
     if [[ "${RUN_ENSURE}" == true ]]; then

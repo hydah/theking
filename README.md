@@ -57,7 +57,30 @@ skills/theking/
 
 ## 安装
 
-推荐把 `workflowctl` 当成独立 CLI 安装，不要依赖系统自带的旧版 `pip` 或旧版 Python。
+如果你是直接把这个仓库 clone 到本地，推荐优先使用仓库自带的 home 安装器：
+
+```bash
+./install.sh
+```
+
+默认行为：
+
+- 安装一个受管理的副本到 `~/.agents/skills/theking`
+- 安装 `workflowctl` 到 `~/.local/bin/workflowctl`
+- 安装 helper wrapper 到 PATH：`theking-install`（自更新入口）
+- 如果检测到你已经有 `~/.claude` 或 `~/.codebuddy`，会询问是否也把 skill 暴露到对应的 `skills/theking` 目录
+- **不会**自动修改 `~/.zshrc` / `~/.bashrc`；如果 `~/.local/bin` 不在 PATH 中，脚本会打印提示
+
+常用参数：
+
+```bash
+./install.sh --yes
+./install.sh --targets agents,claude
+./install.sh --bin-dir ~/.local/bin
+./install.sh --force
+```
+
+如果你更偏好独立工具安装，也仍然可以把 `workflowctl` 当成独立 CLI 安装，不依赖系统自带的旧版 `pip` 或旧版 Python：
 
 ```bash
 pipx install /path/to/theking
