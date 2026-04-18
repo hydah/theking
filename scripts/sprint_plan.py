@@ -8,6 +8,7 @@ without the full CLI wiring.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,127 @@ except ImportError:
         slugify,
         stringify,
     )
+
+
+# --- Sprint-level frontmatter (ADR-002 sealed sprints) -------------------
+#
+# sprint.md gains an OPTIONAL leading YAML frontmatter block whose only
+# recognised keys are ``status`` and ``sealed_at``. Anything else raises so
+# we never silently drop drift. When the block is absent (sprint-001 /
+# sprint-002 fixtures and every freshly minted sprint), helpers below still
+# work — they simply return an empty dict and treat the whole file as body.
+
+ALLOWED_SPRINT_FRONTMATTER_KEYS = frozenset({"status", "sealed_at"})
+ALLOWED_SPRINT_STATUSES = frozenset({"sealed"})
+
+
+def split_sprint_md(text: str) -> tuple[dict[str, str], str]:
+    """Split sprint.md into (frontmatter_dict, body).
+
+    Returns ({}, text) when the file does not start with a ``---`` block.
+    Raises ``WorkflowError`` when the leading block is malformed (unclosed,
+    unknown key, or invalid status value).
+    """
+
+    if not text.startswith("---\n"):
+        return {}, text
+
+    end_marker = text.find("\n---\n", 4)
+    if end_marker == -1:
+        raise WorkflowError("sprint.md frontmatter is not closed")
+
+    header_text = text[4:end_marker]
+    body = text[end_marker + len("\n---\n") :]
+
+    frontmatter: dict[str, str] = {}
+    for raw_line in header_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$", line)
+        if not match:
+            raise WorkflowError(f"Invalid sprint.md frontmatter line: {raw_line!r}")
+        key, raw_value = match.groups()
+        if key not in ALLOWED_SPRINT_FRONTMATTER_KEYS:
+            raise WorkflowError(
+                f"Unknown sprint.md frontmatter key: {key!r}. "
+                f"Allowed keys: {sorted(ALLOWED_SPRINT_FRONTMATTER_KEYS)}"
+            )
+        value = raw_value.strip()
+        if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+            value = value[1:-1]
+        frontmatter[key] = value
+
+    status = frontmatter.get("status")
+    if status is not None and status not in ALLOWED_SPRINT_STATUSES:
+        raise WorkflowError(
+            f"Unknown sprint.md status: {status!r}. "
+            f"Allowed values: {sorted(ALLOWED_SPRINT_STATUSES)}"
+        )
+
+    return frontmatter, body
+
+
+def render_sprint_md(frontmatter: dict[str, str], body: str) -> str:
+    """Render sprint.md from a frontmatter dict + raw body.
+
+    Skips the frontmatter block entirely when the dict is empty so legacy
+    sprint.md files (no header) round-trip byte-for-byte.
+    """
+
+    if not frontmatter:
+        return body
+
+    lines = ["---"]
+    # Stable ordering: status first, then sealed_at, then any remaining
+    # allowed keys alphabetically. Today the allow-list has only those two
+    # keys, but defensive ordering future-proofs the format.
+    for key in ("status", "sealed_at"):
+        if key in frontmatter:
+            lines.append(f"{key}: {frontmatter[key]}")
+    for key in sorted(frontmatter):
+        if key in ("status", "sealed_at"):
+            continue
+        lines.append(f"{key}: {frontmatter[key]}")
+    lines.append("---")
+    return "\n".join(lines) + "\n" + body
+
+
+def read_sprint_frontmatter(sprint_md_path: Path) -> dict[str, str]:
+    return split_sprint_md(sprint_md_path.read_text(encoding="utf-8"))[0]
+
+
+def sprint_is_sealed(sprint_md_path: Path) -> bool:
+    if not sprint_md_path.is_file():
+        return False
+    return read_sprint_frontmatter(sprint_md_path).get("status") == "sealed"
+
+
+def reject_sealed_sprint_for_writes(sprint_dir: Path) -> None:
+    """Raise WorkflowError if ``sprint_dir/sprint.md`` is sealed.
+
+    Called from init-task / init-sprint-plan BEFORE any filesystem mutation
+    so a sealed sprint is truly immutable.
+    """
+
+    sprint_md = sprint_dir / "sprint.md"
+    if not sprint_is_sealed(sprint_md):
+        return
+    raise WorkflowError(
+        f"sprint {sprint_dir.name} is sealed; "
+        f"use workflowctl followup-sprint --source-sprint {sprint_dir} "
+        "--new-theme <slug> instead of writing into it."
+    )
+
+
+def utc_iso8601_z() -> str:
+    """Return the current UTC time in ``YYYY-MM-DDTHH:MM:SSZ`` form.
+
+    The CI-friendly seam: tests stub this via monkeypatch when they need a
+    deterministic timestamp.
+    """
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def require_string(value: Any, label: str) -> str:
@@ -205,10 +327,35 @@ def render_spec_markdown(
         return "\n".join(f"- {item}" for item in items)
 
     def checklist(key: str, fallback_comment: str) -> str:
+        """Render the Acceptance checklist with mandatory traceability
+        sub-bullets (ADR-003 闸 2). Each hint item becomes a checkbox +
+        two child bullets (验证方式 / 证据路径) filled with placeholder
+        comments that `workflowctl check` will later require the author
+        to replace with real values before advancing past `red`."""
+
         items = [item.strip() for item in hints.get(key, []) if str(item).strip()]
+        subbullet_vm = (
+            "  - 验证方式: "
+            "<!-- unit | integration | smoke | e2e | manual-observed -->"
+        )
+        subbullet_ep = (
+            "  - 证据路径: "
+            "<!-- verification/<profile>/smoke.md or tests/test_x.py::test_y -->"
+        )
         if not items:
-            return f"- [ ] <!-- {fallback_comment} -->"
-        return "\n".join(f"- [ ] {item}" for item in items)
+            return "\n".join(
+                [
+                    f"- [ ] <!-- {fallback_comment} -->",
+                    subbullet_vm,
+                    subbullet_ep,
+                ]
+            )
+        rendered: list[str] = []
+        for item in items:
+            rendered.append(f"- [ ] {item}")
+            rendered.append(subbullet_vm)
+            rendered.append(subbullet_ep)
+        return "\n".join(rendered)
 
     return (
         f"# {title} Spec\n\n"

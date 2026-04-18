@@ -577,6 +577,7 @@ def sync_runtime_manifest_baseline(project_dir: Path, project_slug: str) -> None
 def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
     theking_dir = get_theking_dir(project_dir)
     context_dir = theking_dir / "context"
+    adr_dir = context_dir / "adr"
     memory_dir = theking_dir / "memory"
     verification_dir = theking_dir / "verification"
     state_dir = theking_dir / "state"
@@ -606,6 +607,7 @@ def ensure_theking_scaffold(project_dir: Path, project_slug: str) -> None:
 
     for directory in (
         context_dir,
+        adr_dir,
         memory_dir,
         verification_dir,
         state_dir,

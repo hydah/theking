@@ -1,6 +1,6 @@
 ---
 name: tdd-guide
-description: "Test-Driven Development specialist for {project_slug}. Enforces write-tests-first methodology within the theking workflow. Reads spec.md before writing any test. Use PROACTIVELY before any implementation code — especially for new features, bug fixes, and refactors."
+description: "Test-Driven Development specialist for {project_slug}. Enforces write-tests-first methodology within the theking workflow. Reads spec.md before writing any test. Use PROACTIVELY before any implementation code — especially for new features, bug fixes, and refactors. Pin-only tasks (only adding a regression test against existing behavior) may document the waiver in task.md and skip Step 1.5 adversarial-input enumeration."
 tools: Read, Write, Edit, Bash, Grep
 ---
 
@@ -30,6 +30,34 @@ Read the task's spec.md file.
 Extract: Acceptance criteria, Test Plan, Edge Cases.
 These drive your test design.
 ```
+
+### Step 1.5: Adversarial Inputs (MANDATORY)
+
+Before writing any test, enumerate at least **10 failure categories** that
+could make the planned implementation wrong, then commit to covering
+**at least 5** of them in your Red-phase tests.
+
+The goal is to force the testing brain out of the "only test happy path"
+default. Write the 10 categories down in the task's spec.md under
+**Edge Cases**, or in a scratch note inside the task directory.
+
+Seed categories to start from (use and expand; these are not the only ones):
+
+- **type boundary**: null / undefined / wrong type / empty string / zero
+- **size boundary**: empty collection / single element / max-size / one past max
+- **concurrency**: two callers at once / reentrance / interruption mid-write
+- **ordering**: reversed input / duplicates / out-of-order events
+- **encoding**: non-ASCII / emoji / CRLF vs LF / BOM / normalization forms
+
+Rules:
+
+- If you cannot find 10 categories, you do not yet understand the problem;
+  go back to Step 1 and re-read spec.md + the affected code.
+- Pin-only tasks (no new implementation, only a regression test against
+  prior code) may document "Not applicable: pinning prior behavior" in the
+  task.md Goal section and skip this step.
+- The 5-of-10 coverage is a floor, not a ceiling. Cover more when the
+  category costs little extra.
 
 ### Step 2: Write Failing Tests (RED)
 ```

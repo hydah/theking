@@ -34,8 +34,14 @@ try:
     )
     from .sprint_plan import (
         parse_plan_entries,
+        read_sprint_frontmatter,
+        reject_sealed_sprint_for_writes,
+        render_sprint_md,
         require_string,
+        split_sprint_md,
+        sprint_is_sealed,
         update_sprint_overview,
+        utc_iso8601_z,
         write_task_files,
     )
     from .validation import (
@@ -67,6 +73,8 @@ try:
         stringify,
         task_requires_security_review,
         validate_sprint_dir,
+        validate_sprint_location,
+        validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
         write_if_missing,
@@ -98,8 +106,14 @@ except ImportError:
     )
     from sprint_plan import (
         parse_plan_entries,
+        read_sprint_frontmatter,
+        reject_sealed_sprint_for_writes,
+        render_sprint_md,
         require_string,
+        split_sprint_md,
+        sprint_is_sealed,
         update_sprint_overview,
+        utc_iso8601_z,
         write_task_files,
     )
     from validation import (
@@ -131,6 +145,8 @@ except ImportError:
         stringify,
         task_requires_security_review,
         validate_sprint_dir,
+        validate_sprint_location,
+        validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
         write_if_missing,
@@ -305,6 +321,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sprint_check.add_argument("--sprint-dir", required=True)
     sprint_check.set_defaults(handler=handle_sprint_check)
+
+    sprint_smoke = add_command_parser(
+        subparsers,
+        "sprint-smoke",
+        help_text=(
+            "Verify that every execution_profile used by a sprint's tasks has "
+            "substantive evidence under sprint_dir/verification/<profile>/ "
+            "(ADR-003 hard rule #9). No --skip-smoke flag by design."
+        ),
+        example="workflowctl sprint-smoke --sprint-dir .theking/workflows/my-app/sprints/sprint-001-foundation",
+    )
+    sprint_smoke.add_argument("--sprint-dir", required=True)
+    sprint_smoke.set_defaults(handler=handle_sprint_smoke)
+
+    seal_sprint = add_command_parser(
+        subparsers,
+        "seal-sprint",
+        help_text="Mark a sprint immutable after every task reaches done/blocked.",
+        example="workflowctl seal-sprint --sprint-dir .theking/workflows/my-app/sprints/sprint-001-foundation",
+    )
+    seal_sprint.add_argument("--sprint-dir", required=True)
+    seal_sprint.set_defaults(handler=handle_seal_sprint)
+
+    followup_sprint = add_command_parser(
+        subparsers,
+        "followup-sprint",
+        help_text="Create a new sprint that back-links to a prior sprint as its source.",
+        example=(
+            "workflowctl followup-sprint --project-dir . --project-slug my-app "
+            "--source-sprint .theking/workflows/my-app/sprints/sprint-001-foundation "
+            "--new-theme edge-case-fix --reason \"Caught a missed branch.\""
+        ),
+    )
+    add_project_locator_arguments(followup_sprint)
+    add_project_slug_argument(followup_sprint)
+    followup_sprint.add_argument("--source-sprint", required=True)
+    followup_sprint.add_argument("--new-theme", required=True)
+    followup_sprint.add_argument("--reason", required=True)
+    followup_sprint.set_defaults(handler=handle_followup_sprint)
 
     activate = add_command_parser(
         subparsers,
@@ -578,6 +633,7 @@ def handle_init_task(args: argparse.Namespace) -> None:
     sprint_dir = requested_sprint_dir.resolve()
     ensure_within_directory(sprint_dir, sprints_dir.resolve(), "sprint")
     ensure_file(sprint_dir / "sprint.md", "sprint.md")
+    reject_sealed_sprint_for_writes(sprint_dir)
 
     tasks_dir = sprint_dir / "tasks"
     ensure_local_path(tasks_dir, project_dir, "tasks")
@@ -746,6 +802,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
     sprint_dir = requested_sprint_dir.resolve()
     ensure_within_directory(sprint_dir, sprints_dir.resolve(), "sprint")
     ensure_file(sprint_dir / "sprint.md", "sprint.md")
+    reject_sealed_sprint_for_writes(sprint_dir)
 
     tasks_dir = sprint_dir / "tasks"
     ensure_local_path(tasks_dir, project_dir, "tasks")
@@ -884,6 +941,230 @@ def handle_sprint_check(args: argparse.Namespace) -> None:
     sprint_dir = input_sprint_dir.resolve()
     validate_sprint_dir(sprint_dir)
     print(f"OK {sprint_dir}")
+
+
+def handle_sprint_smoke(args: argparse.Namespace) -> None:
+    """Verify the sprint has substantive cross-task evidence for every
+    execution_profile its tasks declare (ADR-003 hard rule #9).
+
+    Callable standalone (audit trail) or as a pre-check inside
+    ``handle_seal_sprint``. No ``--skip`` flag by design — I-003 forbids
+    hard-rule opt-outs.
+    """
+
+    input_sprint_dir = Path(args.sprint_dir).expanduser()
+    if input_sprint_dir.is_symlink():
+        raise WorkflowError(f"sprint_dir must not be a symlink: {input_sprint_dir}")
+    sprint_dir = input_sprint_dir.resolve()
+    # Enforce theking layout parity with sprint-check so users cannot
+    # accidentally run sprint-smoke on a non-theking dir and get a
+    # misleading OK / wrong-profile error. MEDIUM finding in
+    # code-review-round-001.
+    validate_sprint_location(sprint_dir)
+    ensure_file(sprint_dir / "sprint.md", "sprint.md")
+    validate_sprint_smoke_evidence(sprint_dir)
+    print(f"OK {sprint_dir}")
+
+
+def handle_seal_sprint(args: argparse.Namespace) -> None:
+    """Mark a sprint sealed by writing leading frontmatter on sprint.md.
+
+    Pre-conditions:
+    - Every TASK-* directory under tasks/ must have task.md whose status is
+      in ``TERMINAL_STATUSES`` (done / blocked).
+    - The sprint must contain at least one task (sealing an empty sprint
+      destroys audit signal — there is nothing to lock down).
+
+    Idempotent: re-running on an already-sealed sprint is a no-op and
+    preserves the original ``sealed_at`` timestamp.
+    """
+
+    input_sprint_dir = Path(args.sprint_dir).expanduser()
+    if input_sprint_dir.is_symlink():
+        raise WorkflowError(f"sprint_dir must not be a symlink: {input_sprint_dir}")
+    sprint_dir = input_sprint_dir.resolve()
+
+    sprint_md = sprint_dir / "sprint.md"
+    ensure_file(sprint_md, "sprint.md")
+
+    # Parse frontmatter first so a malformed / unknown-key block fails BEFORE
+    # we walk the task tree.
+    frontmatter, body = split_sprint_md(sprint_md.read_text(encoding="utf-8"))
+
+    if frontmatter.get("status") == "sealed":
+        print(f"Sprint already sealed: {sprint_dir}")
+        return
+
+    tasks_dir = sprint_dir / "tasks"
+    if not tasks_dir.is_dir():
+        raise WorkflowError(f"sprint has no tasks directory; nothing to seal: {sprint_dir}")
+
+    task_dirs: list[Path] = []
+    for child in sorted(tasks_dir.iterdir(), key=lambda path: path.name):
+        if child.is_symlink():
+            raise WorkflowError(f"task entry must not be a symlink: {child.name}")
+        if child.is_dir() and child.name.startswith("TASK-"):
+            task_dirs.append(child)
+
+    if not task_dirs:
+        raise WorkflowError(
+            f"sprint has no tasks; nothing to seal: {sprint_dir}. "
+            "Sealing is meant to lock a delivered sprint, not a placeholder."
+        )
+
+    non_terminal: list[tuple[str, str]] = []
+    for task_dir in task_dirs:
+        task_md = task_dir / "task.md"
+        if not task_md.is_file():
+            non_terminal.append((task_dir.name, "missing task.md"))
+            continue
+        try:
+            task_data, _body = load_task_document(task_md)
+        except WorkflowError as error:
+            non_terminal.append((task_dir.name, f"invalid task.md ({error})"))
+            continue
+        status = stringify(task_data.get("status", ""))
+        if status not in TERMINAL_STATUSES:
+            non_terminal.append((task_dir.name, f"status={status}"))
+
+    if non_terminal:
+        bullets = "\n  - ".join(f"{name}: {reason}" for name, reason in non_terminal)
+        raise WorkflowError(
+            f"Refusing to seal {sprint_dir.name}: "
+            f"{len(non_terminal)} task(s) are not terminal (done/blocked):\n  - {bullets}\n"
+            "Advance each to a terminal status first."
+        )
+
+    # ADR-003 hard rule #9 / sprint-004 TASK-003: every execution_profile
+    # used by the sprint's tasks must have substantive evidence at the
+    # SPRINT level (not just per-task). Run this AFTER the terminal-status
+    # guard so a non-terminal sprint still surfaces its clearer error
+    # first. Any failure here short-circuits before we touch sprint.md.
+    validate_sprint_smoke_evidence(sprint_dir)
+
+    frontmatter["status"] = "sealed"
+    frontmatter["sealed_at"] = utc_iso8601_z()
+    sprint_md.write_text(render_sprint_md(frontmatter, body), encoding="utf-8")
+    print(f"Sealed {sprint_dir}")
+
+
+def handle_followup_sprint(args: argparse.Namespace) -> None:
+    """Create a new sprint that back-links to a source sprint.
+
+    Wraps the same flow as ``handle_init_sprint`` (next_index, template
+    render) plus two audit additions:
+
+    1. Inject a ``## Follow-up Source`` section into the new sprint.md
+       between ``## Theme`` and ``## Exit Criteria``.
+    2. Append a single bullet line to ``<source-sprint>/followups.md``
+       (creating the file from template on first followup).
+
+    Works whether or not the source sprint is sealed. The append to
+    ``followups.md`` is metadata about the source sprint, not a write to
+    its sealed body, so the seal guard does not fire.
+    """
+
+    workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
+
+    source_input = Path(args.source_sprint).expanduser()
+    if source_input.is_symlink():
+        raise WorkflowError(f"source-sprint must not be a symlink: {source_input}")
+    source_sprint_dir = source_input.resolve()
+    if not source_sprint_dir.is_dir():
+        raise WorkflowError(f"source-sprint does not exist: {source_sprint_dir}")
+    try:
+        normalize_sprint_name(source_sprint_dir.name)
+    except WorkflowError as error:
+        raise WorkflowError(
+            f"source-sprint must be a sprint directory (sprint-NNN-<slug>): {source_sprint_dir.name}"
+        ) from error
+    source_sprint_md = source_sprint_dir / "sprint.md"
+    ensure_file(source_sprint_md, "source sprint.md")
+
+    new_theme_slug = slugify(args.new_theme)
+    workflow_project_dir = get_workflow_project_dir(project_dir, project_slug)
+    sprints_dir = workflow_project_dir / "sprints"
+    ensure_local_path(sprints_dir, project_dir, "sprints")
+    ensure_within_directory(
+        source_sprint_dir, sprints_dir.resolve(), "source-sprint"
+    )
+
+    sprint_number = next_index(sprints_dir, "sprint")
+    new_sprint_name = f"sprint-{sprint_number:03d}-{new_theme_slug}"
+    new_sprint_dir = sprints_dir / new_sprint_name
+    ensure_local_path(new_sprint_dir, project_dir, "sprint")
+    new_sprint_dir.mkdir(parents=True, exist_ok=False)
+    (new_sprint_dir / "tasks").mkdir(exist_ok=True)
+
+    new_sprint_md = new_sprint_dir / "sprint.md"
+    new_sprint_md.write_text(
+        render_template(
+            "sprint.md.tmpl",
+            sprint_name=new_sprint_name,
+            sprint_theme=humanize_slug(new_theme_slug),
+            exit_criteria="All scoped tasks reach ready_to_merge or done.",
+        ),
+        encoding="utf-8",
+    )
+
+    one_line_reason = " ".join(args.reason.splitlines()).strip()
+    if not one_line_reason:
+        raise WorkflowError("--reason must contain at least one non-blank character")
+
+    # Inject `## Follow-up Source` between `## Theme` and `## Exit Criteria`.
+    sprint_md_text = new_sprint_md.read_text(encoding="utf-8")
+    source_sprint_relative = source_sprint_dir.relative_to(project_dir).as_posix()
+    followup_block = (
+        "\n## Follow-up Source\n"
+        f"- Source sprint: [`{source_sprint_dir.name}`]({source_sprint_relative})\n"
+        f"- Reason: {one_line_reason}\n"
+    )
+    sprint_md_text = sprint_md_text.replace(
+        "\n## Exit Criteria\n",
+        f"{followup_block}\n## Exit Criteria\n",
+        1,
+    )
+    new_sprint_md.write_text(sprint_md_text, encoding="utf-8")
+
+    # Append (or create) followups.md on the source sprint.
+    followups_md = source_sprint_dir / "followups.md"
+    if not followups_md.exists():
+        followups_md.write_text(
+            render_template(
+                "followups.md.tmpl",
+                sprint_name=source_sprint_dir.name,
+            ),
+            encoding="utf-8",
+        )
+    timestamp = utc_iso8601_z()
+    bullet = f"- {new_sprint_name} \u2014 {one_line_reason} ({timestamp})\n"
+    with followups_md.open("a", encoding="utf-8") as handle:
+        handle.write(bullet)
+
+    print(new_sprint_md)
+    print(f"Wrote follow-up entry to {followups_md}")
+
+    # Update the decree checkpoint so a follow-up sprint is observable from
+    # `workflowctl status`. We do not infer flow here — the user will reset
+    # it via the next decree (Phase 2).
+    existing_checkpoint = load_decree_checkpoint(project_dir) or {}
+    write_decree_checkpoint(
+        project_dir=project_dir,
+        project_slug=project_slug,
+        summary=stringify(existing_checkpoint.get("summary", ""))
+        or f"Followup sprint {new_sprint_name} created from {source_sprint_dir.name}",
+        phase="phase-3-planning",
+        next_step=(
+            f"plan tasks for {new_sprint_name} via `workflowctl init-sprint-plan` "
+            f"or `workflowctl init-task --sprint {new_sprint_name} ...`"
+        ),
+        flow=stringify(existing_checkpoint.get("flow", "")),
+        sprint=new_sprint_name,
+    )
 
 
 def handle_activate(args: argparse.Namespace) -> None:

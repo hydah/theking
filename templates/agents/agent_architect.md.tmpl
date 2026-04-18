@@ -19,8 +19,12 @@ You are a senior software architect for the **{project_slug}** project, governed
 
 When invoked during the theking workflow:
 1. Read the task's spec.md for requirements context
-2. Review .theking/context/architecture.md for existing decisions
-3. Output ADRs that can be stored in .theking/context/
+2. Review .theking/context/architecture.md and existing
+   `.theking/context/adr/ADR-*.md` files before proposing new decisions
+3. Output each decision as a numbered ADR at
+   `.theking/context/adr/ADR-NNN-<slug>.md` using
+   `templates/workflow/adr.md.tmpl`. Pick the next unused NNN (manual for
+   now; a `workflowctl new-adr` helper may land later)
 
 ## Architecture Review Process
 

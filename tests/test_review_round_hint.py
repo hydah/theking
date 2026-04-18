@@ -30,9 +30,15 @@ SPEC_CONTENT = "\n".join(
         "",
         "## Test Plan",
         "- Run pytest.",
+        "- Exercise the happy path.",
+        "- Exercise the error path.",
+        "- Verify idempotency.",
+        "- Run the regression suite.",
         "",
         "## Edge Cases",
-        "- None.",
+        "- Empty input.",
+        "- Boundary value.",
+        "- Concurrent access.",
     ]
 )
 
@@ -108,7 +114,13 @@ def _advance(tmp_path: Path, task_dir: Path, to: str) -> None:
     evidence = task_dir / "verification" / "cli" / "test.log"
     if to == "ready_to_merge" and not (evidence.exists() and evidence.stat().st_size > 0):
         evidence.parent.mkdir(parents=True, exist_ok=True)
-        evidence.write_text("pytest run ok\n", encoding="utf-8")
+        # Must carry >= 40 substantive chars to satisfy ADR-003 gate; a
+        # bare "pytest run ok" (12 chars) is now rejected by the
+        # substantive-evidence check in validate_verification_layout.
+        evidence.write_text(
+            "pytest run ok: happy path passes, error path passes, regression clean\n",
+            encoding="utf-8",
+        )
     r = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", to],
         cwd=tmp_path,

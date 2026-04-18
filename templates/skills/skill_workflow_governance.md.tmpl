@@ -9,30 +9,31 @@ description: |
 
 {project_title} 开发工作流治理。本 skill 包含规则、Phase 1-5 完整编排与 workflowctl 命令序列。
 
-## ⛔ 硬规则 — 8 条门禁，违反任何一条 = 交付无效
+## ⛔ 硬规则 — 9 条门禁，违反任何一条 = 交付无效
 
 1. **创建 sprint 后才能写代码** — 收到任务后，第一个 tool call 不是文件编辑工具（`replace_in_file` / `write_to_file` / `Edit` / `Write` 等）。第一个 tool call 要么是搜索/阅读代码（初勘），要么是 `{theking_cmd} ensure`（建 sprint）。**如果你发现自己在没有 active task 的情况下修改了源代码文件（.go / .ts / .tsx / .js / .jsx / .py / .rs / .java / .css / .html 等），立刻停止，回去建 sprint。** → 落地于 Phase 3
 2. **先审上下文，再做分流** — 禁止仅凭需求描述判断。必须先搜索 + 阅读相关代码，输出初勘结果，再宣告流程级别。 → 落地于 Phase 1-2
-3. **先写 spec，再写代码** — `spec.md` 的 Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须填写后，才能开始实现。 → 落地于 Phase 4 步骤 2
+3. **先写 spec，再写代码** — `spec.md` 的 Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须填写后，才能开始实现。Acceptance 每条 `- [ ]` 强制挂两行子项 `- 验证方式:` / `- 证据路径:`，由 `{theking_cmd} check` 的 `validate_acceptance_traceability` 校验。 → 落地于 Phase 4 步骤 2
 4. **先红后绿（TDD）** — 召 tdd-guide agent 先写测试，再写实现。禁止实现代码先于测试代码存在。 → 落地于 Phase 4 步骤 3-4
 5. **每次改动必须 review** — 召 code-reviewer agent。auth/input/api 或 backend.http 任务额外召 security-reviewer。 → 落地于 Phase 4 步骤 7
 6. **没有 build/test 通过不进入 review** — 运行 build/lint/type/unit 检查，输出证据。 → 落地于 Phase 4 步骤 5
 7. **没有 review pair 不进入 done** — `review/code-review-round-NNN.md` + `.resolved.md` 必须完整。 → 落地于 Phase 4 步骤 8
 8. **compact/换工具先跑 `{theking_cmd} status`** — 恢复状态，不要重新发起。 → 见「中断恢复」章节
+9. **有启动入口的 sprint 必须有“冷启动真实跑通”证据** — 任何 `backend.http` / `backend.cli` / `backend.job` / `web.browser` 画像的 task，`ready_to_merge` / `done` 前必须在 `verification/<profile>/` 留下**实质性**证据（启动命令 + stdout/stderr 片段 + 至少一条**非 mock** 的请求/交互/观察），由 `has_substantive_verification_evidence` 强制——纯占位符（“TODO” / “待补” / 空 HTML 注释）和 < 40 个实质字符都会被拒。sprint 收尾前必须跑 `{theking_cmd} sprint-smoke` 核查**跨 task 的联调证据**；`seal-sprint` 自动前置调用 sprint-smoke，缺证据不得封印。**不设 `--skip-smoke` 逃生阀**。 → 落地于 Phase 4 步骤 5 + Phase 5 步骤 1, 7
 
 **自检清单 — 在每个 Phase / 步骤转换时强制过一遍：**
 
 ```
-Phase 1 → 2: 是否已输出初勘结果（已查看/影响面/风险标签）？
+Phase 1 → 2: 是否已输出初勘结果（已查看/影响面/风险标签）+ 调研清单 4 条全部勾选？
 Phase 2 → 3: 是否已运行 {theking_cmd} ensure + init-sprint + init-task？
 Phase 3 → 4: task 目录已创建？（activate / spec / planned 在 Phase 4 子门禁里把关）
-Phase 4 步骤 2 → 3（spec→TDD）: spec 全部 section 填完？status=planned？
+Phase 4 步骤 2 → 3（spec→TDD）: spec 全部 section 填完？Acceptance 每条带验证方式/证据路径？status=planned？
 Phase 4 步骤 3（Red）: 测试先写？运行失败（= 有效的 red）？
 Phase 4 步骤 4（Green）: 最小实现？测试通过？status 推到 green？
-Phase 4 步骤 5 → 7（verification→review）: build/test + 画像验证都有证据？
+Phase 4 步骤 5 → 7（verification→review）: build/test + 画像验证都有证据（>= 40 实质字符，非占位符）？
 Phase 4 review → done: review pair 完整？check 通过？status 到 done？
 Phase 4 → Phase 5: 所有 task 都是 done 或显式 blocked？
-Phase 5 内: sprint 级全量回归过了？refactor-cleaner 改动后的 build+test+review 都过了？
+Phase 5 内: sprint 级全量回归过了？sprint-smoke 跨 task 联调证据通过？refactor-cleaner 改动后的 build+test+review 都过了？
 ```
 
 ---
@@ -147,9 +148,18 @@ stateDiagram-v2
 - 影响面：<模块/接口/用户流程>
 - 风险标签：<无 / auth / input / api / web.browser / ...>
 - 未决问题：<无 / 列表>
+- 调研清单：
+  - [ ] 现有代码里找到 3 处先例（列 file:line）
+  - [ ] 依赖的外部库 / 官方文档已读过最新版
+  - [ ] 识别可复用的测试 helper（列出 helper 名与路径）
+  - [ ] 同模块既有的 edge case 测试模式已参照
 ```
 
-**⛔ 未察案牍、未勘波及，不得擅宣「轻量流程」，更不得动笔改代码。**
+调研清单 4 条都要在动笔前逐条过一遍。若其中任何一条无法凭证据勾选，
+视为关键未决，必须升级到完整流程；**不允许通过宣告「轻量流程」来跳过
+调研清单**。
+
+**⛔ 未察案牍、未勘波及、未过调研清单，不得擅宣「轻量流程」，更不得动笔改代码。**
 
 ---
 
@@ -192,7 +202,18 @@ stateDiagram-v2
 #### 完整流程
 
 1. 召 **中书令**（planner）起草方略，拆解需求为 task 列表
-2. 涉及架构决策时，先问 **太傅**（architect）
+2. 方略里出现以下 4 条信号之**任一条**，**必须**先召 **太傅**
+   （architect）出 ADR（写入
+   `.theking/context/adr/ADR-NNN-<slug>.md`），再进入 step 3：
+   - **跨 module 接口**：方略会引入新的跨模块调用点
+   - **引入新依赖**：package.json / pyproject.toml / go.mod /
+     Cargo.toml 新增依赖或显著抬升版本约束
+   - **公共接口变更**：已发布 CLI flag / 配置 schema / REST endpoint /
+     public API 的 signature 变化
+   - **数据迁移**：schema 变更、字段迁移、索引重建、需回填脚本
+
+   多条信号命中时仍只出一份 ADR，architect 在 ADR 内分段归纳。
+   此规则仅对完整流程生效；轻量流程（单 task sprint）不触发。
 3. 确认 task 间依赖关系（DAG）
 4. 创建 sprint + 批量创建 task：
    ```bash
@@ -274,6 +295,14 @@ stateDiagram-v2
 - `backend.cli` / `backend.job`：至少执行真实入口并核对输出或副作用
 - 将命令、结果、截图/日志等证据写入 `verification/<profile>/`
 
+**⛔ 证据闸（硬规则 #9 的 task 级落点）**：
+`{theking_cmd} check` 在 `ready_to_merge` / `done` 时会调用
+`has_substantive_verification_evidence`——profile 目录下所有文件
+的 substantive 字符数（剥注释 / 剥 placeholder token 后的非空白
+字符）累加必须 ≥ 40。纯占位符（`TODO` / `待补` / `<!-- ... -->`）、
+2 字节随机二进制、bullet-only 内容**全部拒绝**。写 evidence 时
+至少给一行真命令 + 一行可验证的输出。
+
 **6. 归档 · 提交（Commit）**
 - 按有意义粒度 commit：典型为 `spec + red 测试` 一次、`green 实现` 一次、（可选）`重构` 一次
 - **禁止**整个 task 一锅端提交；**禁止**`WIP` 粒度碎 commit
@@ -287,6 +316,16 @@ stateDiagram-v2
 - 召 **兵部尚书**（e2e-runner）— web.browser 时
 - **有 CRITICAL/HIGH findings → 走【驳回重议分支】，不要在当前轮次里直接改代码后标 resolved**
 - **全部已解决 → 产出 `round-NNN.resolved.md`（含 `## Fixes` + `## Verification`）**
+
+> **⚡ reviewer 并发（同一 round 内）**
+>
+> code-reviewer / security-reviewer / e2e-runner 在**同一轮 review** 内可
+> **并行召唤** —— 它们消费同一份 git diff，互不依赖，没有理由让 e2e-runner
+> 等 code-reviewer 收尾。
+>
+> **串行只在 review pair 之间（round N → round N+1）保留**：必须先把
+> round N 的 `.resolved.md` 写完，再决定是 advance-status 还是开 round N+1。
+> 跨 round 并行会破坏审计链。
 
 > **💡 resolved 后下一步：直接 advance-status，不要再 init-review-round**
 >
@@ -330,7 +369,13 @@ g. 若尚有未解决 findings → 再开一轮 init-review-round；否则回步
 
 ```bash
 {theking_cmd} sprint-check --sprint-dir <SPRINT_DIR>
+{theking_cmd} sprint-smoke --sprint-dir <SPRINT_DIR>
 ```
+
+`sprint-check` 校验每个 task 的结构合同；`sprint-smoke`（硬规则 #9
+的 sprint 级落点）聚合所有 task 的 `execution_profile`，要求每个
+profile 在 `sprint-dir/verification/<profile>/` 下都有实质性证据，
+缺证据无法 seal。
 
 #### 2. 🧪 演武 · Sprint 级全量回归验证（必做，不可省）
 
@@ -348,6 +393,9 @@ g. 若尚有未解决 findings → 再开一轮 init-review-round；否则回步
 - sprint 涉及 `web.browser` → 召 **兵部尚书**（e2e-runner）跑一次**跨 task 的端到端场景**（不只是单 task smoke）
 - sprint 涉及 `backend.http` → 跑一次关键集成链路（多服务协同、真实依赖）
 - sprint 涉及 `backend.cli` / `backend.job` → 按关键 pipeline 实跑一次
+
+跨 task 端到端证据写入 `sprint-dir/verification/<profile>/`，同一批
+证据也会被 `sprint-smoke` 核验（硬规则 #9）——实跑 + 落盘 = 一次动作两个用途。
 - 证据写入 `sprint-dir/verification/<profile>/`
 
 #### 4. 🧹 裁汰 · 代码清理（完整流程必做，轻量流程按需）
@@ -381,15 +429,64 @@ b. 召 code-reviewer 做【文档专项轻审】，重点：
 c. 不一致 → 回炉重写；一致 → commit
 ```
 
-#### 7. 🔒 封印 · 停用
+#### 7. 🔒 封印 · 停用 + Seal
 
 ```bash
 {theking_cmd} deactivate --project-dir {project_dir_quoted}
+{theking_cmd} seal-sprint --sprint-dir <SPRINT_DIR>
 ```
+
+`seal-sprint` 在所有 task 都为 `done` / `blocked` 时给 sprint.md 顶部
+盖一个 `status: sealed` + `sealed_at: <UTC ISO8601 Z>` 的印记。**封印后该
+sprint 即为 immutable 审计单元**：`init-task --sprint <sealed>` 与
+`init-sprint-plan --sprint <sealed>` 都会拒执，新想法一律走
+`followup-sprint`（见下一节）。
+
+可省略：早期 sprint（sprint-001 / sprint-002 之前）的历史 sprint.md 没有
+frontmatter，仍可正常读写——不强制回填。
 
 #### 8. 📯 奏捷 · 汇报旨意执行结果
 
 总结本次交付：完成的 task 列表、全量回归结果、知识沉淀指针、遗留 blocked 项。
+
+---
+
+## 🔁 Sprint 收尾后的回补 · followup-sprint
+
+Sprint 一旦 `seal-sprint`，就是 immutable 审计单元。**封印后再有想法、
+发现遗留、或想做加强**，一律**新起 sprint**，绝不回填旧 sprint。轻重无
+关：完整流程与轻量流程的 sprint 都遵循同一规则。
+
+按"距源 sprint 远近 × 与原 theme 相关性"分四种情况选型：
+
+| 距源 sprint | 与原 theme | 命名建议 | 反向链接 |
+|------------|----------|---------|---------|
+| **场景 A · 自然延续**：sprint-N 刚收尾 | 同主题加强 | `sprint-(N+1)-<theme>-continued` | 建议但非强制 |
+| **场景 A · 独立议题**：sprint-N 刚收尾 | 与原 theme 无关 | `sprint-(N+1)-<new-theme>` | 不需要 |
+| **场景 B · 真 bug / 明确遗留**：已迭代多个 sprint 后回看 | sprint-N 留下的明确 bug | `sprint-(N+k+1)-followup-sprint-NNN-<slug>` | **强制** |
+| **场景 B · 演进 / 重构**：已迭代多个 sprint 后回看 | 新阶段演进，非 sprint-N 的错 | `sprint-(N+k+1)-<new-theme>` | 在 evolution-workflow-ux 记一笔即可 |
+
+**强制反向链接**的两条机制：
+
+```bash
+{theking_cmd} followup-sprint \
+  --project-dir . --project-slug <slug> \
+  --source-sprint .theking/workflows/<slug>/sprints/<source-sprint> \
+  --new-theme <new-theme-slug> \
+  --reason "<one-line reason for the followup>"
+```
+
+`followup-sprint` 自动做两件事：
+
+1. 在新 sprint.md 的 `## Theme` 之后插入一段 `## Follow-up Source`，
+   带上源 sprint 的相对路径与 reason。
+2. 在源 sprint 目录下 append 一行到 `followups.md`（首次创建文件，之后
+   只追加）；这是元数据追加，不算"改写历史"，对已 sealed 的 sprint 也
+   合法（不动 sprint.md 本体）。
+
+**不允许** reopen 已 sealed 的 sprint —— 没有 `reopen-sprint` 命令也
+不会有；reopen 会破坏 sprint 是 immutable 审计单元的根基。完整规则见
+`.theking/context/evolution-workflow-ux.md` I-007。
 
 ---
 
@@ -404,9 +501,12 @@ c. 不一致 → 回炉重写；一致 → commit
 | `checkpoint` (手动落盘 decree 状态) | Phase 2 / 3 |
 | `activate` / `advance-status` | Phase 4 步骤 1-4、8 |
 | `init-review-round` | Phase 4 步骤 7 |
-| `check` (单 task 结构校验) | Phase 4 步骤 8 |
+| `check` (单 task 结构校验 + substantive-evidence gate) | Phase 4 步骤 8 |
 | `sprint-check` (sprint artifact 校验) | Phase 5 步骤 1 |
-| `deactivate` (封印停用) | Phase 5 步骤 7 |
+| `sprint-smoke` (跨 task 联调证据核查，硬规则 #9) | Phase 5 步骤 1；`seal-sprint` 自动前置调用 |
+| `deactivate` (停用 active task) | Phase 5 步骤 7 |
+| `seal-sprint` (sprint.md 盖印 immutable + 前置 sprint-smoke) | Phase 5 步骤 7 |
+| `followup-sprint` (新起回补 sprint + 反向链接) | Phase 5 之后（见「Sprint 收尾后的回补」节） |
 | `status` (中断恢复) | 见「中断恢复」章节 |
 
 ## 🔁 Review Loop · 复核闭环

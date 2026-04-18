@@ -140,6 +140,7 @@ def validate_task_dir(task_dir: Path) -> None:
     validate_spec(
         task_paths.spec_md,
         require_content=spec_requires_content(validated["status_history"]),
+        flow=normalize_task_flow(task_data.get("flow")),
     )
     validate_review_requirements(task_paths.review_dir, validated)
 
@@ -257,7 +258,84 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_spec(spec_md: Path, *, require_content: bool) -> None:
+SPEC_SECTION_COUNT_THRESHOLDS_FULL: dict[str, int] = {
+    "Test Plan": 5,
+    "Edge Cases": 3,
+}
+SPEC_SECTION_COUNT_THRESHOLDS_LIGHT: dict[str, int] = {
+    "Test Plan": 3,
+    "Edge Cases": 1,
+}
+ALLOWED_TASK_FLOWS = {"full", "lightweight"}
+
+
+def normalize_task_flow(value: Any) -> str:
+    """Normalize the task.md 'flow' frontmatter field. Missing -> 'full'."""
+    if value is None:
+        return "full"
+    text = stringify(value).strip().lower()
+    if text == "":
+        return "full"
+    if text not in ALLOWED_TASK_FLOWS:
+        raise WorkflowError(
+            f"Unknown task flow: {text!r}. Allowed values: "
+            f"{sorted(ALLOWED_TASK_FLOWS)}"
+        )
+    return text
+
+
+def count_spec_section_items(section_body: str) -> int:
+    """Count top-level bullet items under a spec section.
+
+    Rules:
+    - Strip HTML comments first (they are placeholders, not content).
+    - Only lines with zero leading whitespace that start with `-`, `*`, or `+`
+      count. Indented (nested) bullets are not new items.
+    - Checkbox bullets (`- [ ]` or `- [x]`) count as one item.
+    """
+    stripped = re.sub(r"<!--.*?-->", "", section_body, flags=re.DOTALL)
+    count = 0
+    for raw_line in stripped.splitlines():
+        if re.match(r"^[-*+]\s+", raw_line):
+            count += 1
+    return count
+
+
+def validate_spec_section_counts(spec_md: Path, *, flow: str) -> None:
+    """Enforce per-flow minimum item counts on content-carrying spec sections.
+
+    Legacy spec structure (only Acceptance + Test Plan) is preserved as a
+    bypass to match `validate_spec`'s backward-compat contract.
+    """
+    flow = normalize_task_flow(flow)
+    spec_text = spec_md.read_text(encoding="utf-8")
+    sections = collect_spec_sections(spec_text)
+    if is_legacy_spec_structure(sections):
+        return
+
+    thresholds = (
+        SPEC_SECTION_COUNT_THRESHOLDS_FULL
+        if flow == "full"
+        else SPEC_SECTION_COUNT_THRESHOLDS_LIGHT
+    )
+    for heading, minimum in thresholds.items():
+        section_body = sections.get(heading, "")
+        observed = count_spec_section_items(section_body)
+        if observed < minimum:
+            raise WorkflowError(
+                f"spec.md '{heading}' has {observed} item(s); "
+                f"{flow} flow requires >= {minimum}. "
+                "Either add more items, or switch this task to lightweight "
+                "flow by setting `flow: lightweight` in task.md frontmatter."
+            )
+
+
+def validate_spec(
+    spec_md: Path,
+    *,
+    require_content: bool,
+    flow: str | None = None,
+) -> None:
     spec_text = spec_md.read_text(encoding="utf-8")
     sections = collect_spec_sections(spec_text)
     if not require_content and is_legacy_spec_structure(sections):
@@ -269,6 +347,193 @@ def validate_spec(spec_md: Path, *, require_content: bool) -> None:
             raise WorkflowError(f"spec.md is missing required section: {heading}")
         if require_content and not spec_section_has_content(section_body):
             raise WorkflowError(f"spec.md section must not be empty: {heading}")
+
+    if require_content:
+        validate_spec_section_counts(spec_md, flow=flow or "full")
+        validate_acceptance_traceability(spec_md)
+
+
+# --- Acceptance traceability gate (ADR-003 / sprint-004 TASK-002) -----------
+#
+# Every `- [ ] <criterion>` under ## Acceptance must declare, via two
+# indented child bullets, which verification method proves it and where
+# the evidence lives. This closes the "unit tests fake the acceptance"
+# 偷懒路径 exposed by voiceagent4 — spec authors can no longer hide the
+# fact that their "end-to-end acceptance" is actually satisfied by a
+# mocked unit test.
+
+ALLOWED_VERIFICATION_METHODS: frozenset[str] = frozenset(
+    {"unit", "integration", "smoke", "e2e", "manual-observed"}
+)
+
+# Regex pieces kept at module scope so tests can introspect / future
+# extensions can reuse them.
+#
+# Intentionally narrow: spec.md.tmpl and render_spec_markdown both emit
+# `-` bullets exclusively. Accepting `*` / `+` would create drift vectors
+# (user hand-edits a spec with `*` and silently bypasses the gate) with
+# no upside. Extend here only when parsing external specs becomes a goal.
+_ACCEPTANCE_CHECKBOX_RE = re.compile(r"^-\s+\[[ xX]\]\s+(?P<text>.+?)\s*$")
+_VERIFICATION_METHOD_SUBBULLET_RE = re.compile(
+    r"^\s+-\s+验证方式\s*[:：]\s*(?P<value>.*?)\s*$"
+)
+_EVIDENCE_PATH_SUBBULLET_RE = re.compile(
+    r"^\s+-\s+证据路径\s*[:：]\s*(?P<value>.*?)\s*$"
+)
+# Matches any top-level (column-0) bullet — used to close the current
+# checkbox's sub-bullet scope when a sibling bullet appears without
+# a checkbox marker.
+_TOP_LEVEL_BULLET_RE = re.compile(r"^-\s+")
+
+
+def _iter_acceptance_checkboxes(acceptance_body: str) -> list[dict[str, Any]]:
+    """Walk the Acceptance section body and return one dict per top-level
+    `- [ ]` checkbox, collecting the verification-method and evidence-path
+    sub-bullets that appear between it and the next scope-closing event.
+
+    Scope closes on any of:
+
+    - a new top-level checkbox (the match captures the next one)
+    - a new top-level `- ` bullet without a checkbox marker
+    - a non-indented, non-empty line that is NOT a sub-bullet —
+      paragraphs, headings, blockquotes, etc. Matches the visual Markdown
+      semantics: a paragraph at column 0 breaks the list.
+
+    This is stricter than "only close on top-level bullets" — MEDIUM-1 in
+    round-001 review pointed out that the looser rule would silently
+    attach a subsequent checkbox's sub-bullets to the previous one
+    whenever a paragraph was inserted between them.
+    """
+
+    entries: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in acceptance_body.splitlines():
+        checkbox = _ACCEPTANCE_CHECKBOX_RE.match(raw_line)
+        if checkbox is not None:
+            if current is not None:
+                entries.append(current)
+            current = {
+                "text": checkbox.group("text").strip(),
+                "verification_method": None,
+                "verification_method_raw": None,
+                "evidence_path": None,
+                "line": raw_line,
+            }
+            continue
+
+        if current is None:
+            # Content before the first checkbox — ignored (could be a
+            # leading comment or plain bullet).
+            continue
+
+        # Sub-bullet matches take precedence (they are indented, so they
+        # can never collide with the top-level-close branch below).
+        vm = _VERIFICATION_METHOD_SUBBULLET_RE.match(raw_line)
+        if vm is not None:
+            raw_value = vm.group("value")
+            normalized = raw_value.strip().lower()
+            current["verification_method_raw"] = raw_value
+            current["verification_method"] = normalized
+            continue
+
+        ep = _EVIDENCE_PATH_SUBBULLET_RE.match(raw_line)
+        if ep is not None:
+            current["evidence_path"] = ep.group("value").strip()
+            continue
+
+        # A top-level `- ` bullet (not a checkbox — the checkbox regex
+        # would have claimed it). Close current scope without starting
+        # a new one.
+        if _TOP_LEVEL_BULLET_RE.match(raw_line) is not None:
+            entries.append(current)
+            current = None
+            continue
+
+        # Any other non-indented, non-empty line (paragraph text,
+        # heading, blockquote, etc.) also closes the scope so
+        # subsequent indented sub-bullets do not get misattributed.
+        if raw_line and not raw_line.startswith((" ", "\t")):
+            entries.append(current)
+            current = None
+            continue
+
+        # Blank line or indented-but-not-a-sub-bullet line: keep scope
+        # open. (This preserves the Edge Case "nested content between
+        # checkbox and its sub-bullets is tolerated" for things like
+        # intentional indented blockquotes.)
+
+    if current is not None:
+        entries.append(current)
+    return entries
+
+
+def validate_acceptance_traceability(spec_md: Path) -> None:
+    """Require every ``- [ ] <criterion>`` in ## Acceptance to be followed
+    by:
+
+    - ``  - 验证方式: <method>`` — method must be in
+      :data:`ALLOWED_VERIFICATION_METHODS` (case-insensitive, trimmed).
+    - ``  - 证据路径: <path or test id>`` — must be non-empty after strip;
+      file existence is NOT checked (evidence may arrive post-red).
+
+    The gate runs only on new-format specs (five-section); legacy
+    two-section specs bypass via ``is_legacy_spec_structure`` just like
+    ``validate_spec_section_counts``. An empty Acceptance section (zero
+    checkboxes) also passes — per-checkbox contract, nothing to enforce.
+
+    Error messages are deterministic (first missing piece reported first)
+    so implementers always fix one thing at a time.
+    """
+
+    spec_text = spec_md.read_text(encoding="utf-8")
+    sections = collect_spec_sections(spec_text)
+    if is_legacy_spec_structure(sections):
+        return
+    acceptance_body = sections.get("Acceptance")
+    if acceptance_body is None:
+        # `validate_spec` already enforces Acceptance presence; this is
+        # defensive — if called standalone, silently pass (nothing to
+        # trace) rather than raise a second redundant error.
+        return
+
+    for entry in _iter_acceptance_checkboxes(acceptance_body):
+        text = entry["text"]
+        label = text if len(text) <= 60 else text[:57] + "..."
+
+        if entry["verification_method_raw"] is None:
+            raise WorkflowError(
+                f"spec.md Acceptance checkbox missing 验证方式 sub-bullet: {label!r}. "
+                "Add `  - 验证方式: <unit | integration | smoke | e2e | manual-observed>` "
+                "on the line below the checkbox."
+            )
+
+        if entry["verification_method"] == "":
+            raise WorkflowError(
+                f"spec.md Acceptance checkbox has empty 验证方式 value: {label!r}. "
+                "Provide one of: "
+                f"{', '.join(sorted(ALLOWED_VERIFICATION_METHODS))}."
+            )
+
+        if entry["verification_method"] not in ALLOWED_VERIFICATION_METHODS:
+            raise WorkflowError(
+                "spec.md Acceptance checkbox has unknown 验证方式 "
+                f"{entry['verification_method_raw']!r} on: {label!r}. "
+                "Allowed values: "
+                f"{', '.join(sorted(ALLOWED_VERIFICATION_METHODS))}."
+            )
+
+        if entry["evidence_path"] is None:
+            raise WorkflowError(
+                f"spec.md Acceptance checkbox missing 证据路径 sub-bullet: {label!r}. "
+                "Add `  - 证据路径: <path or test id>` on the line below the checkbox."
+            )
+
+        if entry["evidence_path"] == "":
+            raise WorkflowError(
+                f"spec.md Acceptance checkbox has empty 证据路径 value: {label!r}. "
+                "Provide a path under verification/ or a test identifier "
+                "(e.g. tests/test_x.py::test_y)."
+            )
 
 
 def collect_spec_sections(spec_text: str) -> dict[str, str]:
@@ -314,11 +579,112 @@ def spec_section_has_content(section_body: str) -> bool:
     return False
 
 
-def has_non_empty_verification_evidence(profile_dir: Path) -> bool:
-    for artifact in sorted(profile_dir.rglob("*"), key=lambda path: path.as_posix()):
-        if artifact.is_symlink() or not artifact.is_file():
+# --- Substantive-evidence gate (ADR-003 / sprint-004 TASK-001) --------------
+#
+# Prior gate only checked size > 0, so "待补" / "TODO" / "<!-- pending -->"
+# all passed as "evidence". This gate strips HTML comments, bullet markers,
+# and a small blacklist of placeholder tokens, then requires the remaining
+# substantive character count to meet a minimum across the whole profile dir.
+
+# Matched case-insensitively as whole words. Keep the list small and boring:
+# anything an honest engineer would also want to retype before shipping.
+PLACEHOLDER_TOKENS: frozenset[str] = frozenset(
+    {
+        "todo",
+        "tbd",
+        "pending",
+        "placeholder",
+        "fill me in",
+        "待补",
+    }
+)
+
+# Minimum substantive character count across a profile's evidence files.
+# 40 ≈ one meaningful line ("ran X, observed Y, exit 0"). Below that,
+# reviewers cannot tell what was actually checked.
+SUBSTANTIVE_EVIDENCE_MIN_CHARS = 40
+
+
+_PLACEHOLDER_TOKEN_PATTERN = re.compile(
+    # Sort for deterministic regex construction (frozenset iteration order
+    # is unspecified in CPython, which would make `.pattern` debug output
+    # flap between processes).
+    r"(?i)\b("
+    + "|".join(re.escape(token) for token in sorted(PLACEHOLDER_TOKENS))
+    + r")\b"
+)
+
+
+def substantive_text_length(text: str) -> int:
+    """Return the non-whitespace char count after stripping HTML comments,
+    bullet/checkbox markers, and placeholder tokens.
+
+    Mirrors the comment-stripping pattern from ``spec_section_has_content``
+    so both gates agree on what "real content" looks like.
+    """
+
+    # 1. Drop HTML comments first — they are scaffolding, not evidence.
+    stripped = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    # 2. Drop placeholder tokens anywhere they appear. Whole-word match so
+    #    "todolist" is not accidentally gutted.
+    stripped = _PLACEHOLDER_TOKEN_PATTERN.sub("", stripped)
+    # 3. Drop leading bullet / checkbox markers on each line, matching the
+    #    exact pattern used by spec_section_has_content.
+    cleaned_lines: list[str] = []
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        if artifact.stat().st_size > 0:
+        line = re.sub(r"^[-*+]\s*", "", line)
+        line = re.sub(r"^\[[ xX]\]\s*", "", line)
+        cleaned_lines.append(line)
+    # 4. Count non-whitespace characters in the remainder. Unicode chars
+    #    (CJK, punctuation, etc.) each count as 1 — we're measuring signal,
+    #    not bytes.
+    remainder = "".join(cleaned_lines)
+    return sum(1 for ch in remainder if not ch.isspace())
+
+
+def has_substantive_verification_evidence(profile_dir: Path) -> bool:
+    """Return True iff the combined substantive text across every readable
+    UTF-8 file under ``profile_dir`` meets ``SUBSTANTIVE_EVIDENCE_MIN_CHARS``.
+
+    Directory-level aggregation is intentional: a task may split evidence
+    across smoke.md + stdout.txt + screenshot.md, each individually short.
+
+    Non-UTF-8 / binary artefacts (PNG, PDF, trace dumps) are ALLOWED to
+    live under the profile dir — they often are real evidence — but they
+    do NOT count towards the substantive threshold and do NOT short-circuit
+    the check. At least one UTF-8 sibling must still carry substantive
+    text. This is a deliberate refusal to add an opt-out via "just drop
+    a random binary file here" (ADR-003 / HIGH-1 review finding).
+    Symlinks are skipped entirely.
+    """
+
+    total = 0
+    for artifact in sorted(profile_dir.rglob("*"), key=lambda path: path.as_posix()):
+        if artifact.is_symlink():
+            # Reject eagerly: rglob will happily enumerate children of a
+            # symlinked directory, which could let an attacker "borrow"
+            # substantive text from outside the sprint (e.g. a symlink
+            # to /usr/share/doc) to clear the 40-char floor. HIGH-2 in
+            # sprint-004 TASK-003 code-review-round-001.
+            raise WorkflowError(
+                f"verification evidence must not contain symlinks: "
+                f"{artifact.name} in {profile_dir.name}"
+            )
+        if not artifact.is_file():
+            continue
+        if artifact.stat().st_size == 0:
+            continue
+        try:
+            content = artifact.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            # Binary artefacts are real but unscorable; do not count, do
+            # not short-circuit. See docstring above.
+            continue
+        total += substantive_text_length(content)
+        if total >= SUBSTANTIVE_EVIDENCE_MIN_CHARS:
             return True
     return False
 
@@ -339,9 +705,11 @@ def validate_verification_layout(verification_dir: Path, task_data: dict[str, An
             raise WorkflowError(f"Missing verification profile directory: {profile_dir.name}")
         if not profile_dir.is_dir():
             raise WorkflowError(f"Verification profile path must be a directory: {profile_dir.name}")
-        if status in {"ready_to_merge", "done"} and not has_non_empty_verification_evidence(profile_dir):
+        if status in {"ready_to_merge", "done"} and not has_substantive_verification_evidence(profile_dir):
             raise WorkflowError(
-                "Verification profile directory must contain at least one non-empty evidence file "
+                "Verification profile directory must contain substantive evidence "
+                f"(>= {SUBSTANTIVE_EVIDENCE_MIN_CHARS} substantive chars across its files, "
+                "not just placeholder tokens like 'TODO' / '待补' or empty HTML comments) "
                 f"before {status}: {profile_dir.name}"
             )
 
@@ -451,6 +819,123 @@ def validate_sprint_dir(sprint_dir: Path) -> None:
         all_depends_on[task_dir.name] = [stringify(d) for d in depends_on]
 
     check_dag(all_depends_on)
+
+
+# --- Sprint-level smoke gate (ADR-003 / sprint-004 TASK-003) ----------------
+
+
+def validate_sprint_smoke_evidence(sprint_dir: Path) -> None:
+    """Ensure that every ``execution_profile`` used by the sprint's tasks
+    has substantive evidence under ``sprint_dir/verification/<profile-dir>/``.
+
+    This is the sprint-level complement to the task-level substantive-
+    evidence gate from ADR-003 闸 1. Task-level smoke covers each task
+    in isolation; sprint-smoke guarantees that **cross-task integration
+    evidence** exists at the sprint boundary — catching the voiceagent4
+    failure mode where every individual task had unit tests but the
+    wiring between them (Pipeline, WebRTC audio track, etc.) was never
+    run end-to-end.
+
+    Rules:
+
+    - An empty sprint (no TASK-* directories) is rejected with "nothing
+      to smoke" — sealing a placeholder carries no audit signal.
+    - The set of required profiles is the union of every task's
+      ``execution_profile`` frontmatter field. Blocked tasks still count
+      (the profile was planned even if the work stalled).
+    - For each required profile, ``sprint_dir/verification/<profile-dir>/``
+      must pass :func:`has_substantive_verification_evidence`. Missing
+      dirs and placeholder-only content both fail.
+    - Errors collect ALL missing/placeholder profiles before raising so
+      the operator can fix in one pass rather than drip-feeding.
+    """
+
+    tasks_dir = sprint_dir / "tasks"
+    if not tasks_dir.is_dir():
+        raise WorkflowError(
+            f"sprint has no tasks directory; nothing to smoke: {sprint_dir.name}"
+        )
+
+    task_dirs: list[Path] = []
+    for child in sorted(tasks_dir.iterdir(), key=lambda path: path.name):
+        if child.is_symlink():
+            # Reject eagerly — a symlinked TASK dir could point at a
+            # task whose execution_profile differs from the sibling real
+            # tasks, letting the corresponding profile evidence slip
+            # through the gate. `seal-sprint` uses the same discipline
+            # (see handle_seal_sprint).
+            raise WorkflowError(
+                f"task entry must not be a symlink: {child.name} "
+                "(sprint-smoke cannot trust profiles of symlinked task dirs)"
+            )
+        if not child.is_dir():
+            continue
+        if TASK_ID_PATTERN.fullmatch(child.name):
+            task_dirs.append(child)
+
+    if not task_dirs:
+        raise WorkflowError(
+            f"sprint has no tasks; nothing to smoke: {sprint_dir.name}. "
+            "sprint-smoke guards cross-task integration evidence; "
+            "an empty sprint has no such surface."
+        )
+
+    required_profiles: set[str] = set()
+    unreadable_tasks: list[str] = []
+    for task_dir in task_dirs:
+        task_md = task_dir / "task.md"
+        if not task_md.is_file():
+            unreadable_tasks.append(f"{task_dir.name} (missing task.md)")
+            continue
+        try:
+            task_data = parse_frontmatter(task_md.read_text(encoding="utf-8"))
+        except WorkflowError as error:
+            unreadable_tasks.append(f"{task_dir.name} (invalid task.md: {error})")
+            continue
+        profile_raw = stringify(task_data.get("execution_profile", ""))
+        try:
+            profile = normalize_execution_profile(profile_raw)
+        except WorkflowError:
+            unreadable_tasks.append(
+                f"{task_dir.name} (unknown execution_profile: {profile_raw!r})"
+            )
+            continue
+        required_profiles.add(profile)
+
+    if unreadable_tasks:
+        bullets = "\n  - ".join(unreadable_tasks)
+        raise WorkflowError(
+            f"sprint-smoke cannot determine profiles for {len(unreadable_tasks)} "
+            f"task(s) in {sprint_dir.name}:\n  - {bullets}"
+        )
+
+    verification_dir = sprint_dir / "verification"
+    missing: list[str] = []
+    insufficient: list[str] = []
+    for profile in sorted(required_profiles):
+        profile_dir = verification_dir / execution_profile_dir(profile)
+        if not profile_dir.is_dir():
+            missing.append(profile)
+            continue
+        if not has_substantive_verification_evidence(profile_dir):
+            insufficient.append(profile)
+
+    problems: list[str] = []
+    if missing:
+        problems.append(
+            f"missing evidence dir(s): {', '.join(missing)} "
+            f"(expected under {verification_dir.name}/<profile>/)"
+        )
+    if insufficient:
+        problems.append(
+            f"insufficient evidence in: {', '.join(insufficient)} "
+            f"(need >= {SUBSTANTIVE_EVIDENCE_MIN_CHARS} substantive chars, "
+            "not just placeholder tokens)"
+        )
+    if problems:
+        raise WorkflowError(
+            f"sprint-smoke failed for {sprint_dir.name}: " + "; ".join(problems)
+        )
 
 
 def ensure_review_pair(review_dir: Path, review_type: str, round_number: int) -> None:
@@ -767,8 +1252,15 @@ def serialize_task_frontmatter(task_data: dict[str, Any]) -> str:
         "depends_on:",
         *[f"  - {stringify(dep)}" for dep in task_data["depends_on"]],
         f"current_review_round: {int(task_data['current_review_round'])}",
-        "---",
     ]
+    # Preserve optional `flow` field if present. Without this, every call to
+    # `apply_status_transition` -> `write_task_document` silently strips the
+    # field a user added by hand to switch a task to lightweight thresholds.
+    # Rendered last so it never disturbs the position of required fields.
+    if task_data.get("flow") is not None:
+        flow_value = normalize_task_flow(task_data["flow"])
+        lines.append(f"flow: {flow_value}")
+    lines.append("---")
     return "\n".join(lines)
 
 

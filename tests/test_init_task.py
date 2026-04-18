@@ -59,6 +59,7 @@ def parse_frontmatter(text: str) -> dict[str, object]:
 
 
 def write_complete_spec(task_dir: Path) -> None:
+    # Full-flow spec must meet sprint-002 TASK-001 thresholds (>=5/>=3).
     (task_dir / "spec.md").write_text(
         "\n".join(
             [
@@ -75,9 +76,15 @@ def write_complete_spec(task_dir: Path) -> None:
                 "",
                 "## Test Plan",
                 "- Run the relevant automated checks for this task.",
+                "- Exercise the happy path end-to-end.",
+                "- Cover the primary error path.",
+                "- Verify idempotency of the workflow.",
+                "- Run the regression suite.",
                 "",
                 "## Edge Cases",
                 "- Re-running the flow keeps the task tree consistent.",
+                "- Missing optional inputs do not crash.",
+                "- Partial artifacts do not block recovery.",
             ]
         ),
         encoding="utf-8",

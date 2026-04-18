@@ -151,6 +151,7 @@ Kimi 当前官方不支持 lifecycle hooks（见 issue #986），因此 `.kimi/`
 - 先做上下文初勘，再决定完整流程还是轻量流程。至少查看相关代码、测试、文档、报错或接口契约中的直接证据。
 - 轻量流程只减少规划开销，不减少交付要求。spec、TDD、build/lint/type/unit、执行画像验证、code review、check/sprint-check 都不能跳过。
 - `init-task` 生成的 `spec.md` 是占位稿。任务可以先停在 `draft` 或 `planned`，但进入 `red` 之前必须补全 Scope、Non-Goals、Acceptance、Test Plan、Edge Cases 五段内容。
+- 进入 `red` 时除了"五段非空"，还要通过条目数门槛：完整流程要求 Test Plan ≥ 5 条、Edge Cases ≥ 3 条；轻量流程要求 ≥ 3 条 / ≥ 1 条。在 task.md frontmatter 加 `flow: lightweight` 启用轻量阈值（默认 `full`）。条目不足时 `advance-status` 会给出明确错误提示，补足即可。
 
 不要让 AI 输出这种偷懒判断：
 

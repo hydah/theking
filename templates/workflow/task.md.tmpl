@@ -25,3 +25,10 @@ current_review_round: 0
 - Update status and status_history on every state change.
 - When status enters `in_review`, set current_review_round to the new round number.
 - Do not start implementation before spec.md is filled in and task reaches `planned`.
+
+<!-- Optional: add `flow: lightweight` to the frontmatter above to lower the
+     spec gate thresholds (Test Plan >= 3, Edge Cases >= 1) for small,
+     single-deliverable tasks. Default is `flow: full` (Test Plan >= 5,
+     Edge Cases >= 3). The setting is preserved across status transitions.
+     See `.theking/agents/planner.md` for when to use lightweight flow. -->
+

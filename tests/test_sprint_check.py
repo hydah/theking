@@ -45,9 +45,15 @@ def write_complete_spec(task_dir: Path) -> None:
                 "",
                 "## Test Plan",
                 "- Run the relevant verification for this task.",
+                "- Exercise the happy path.",
+                "- Exercise the error path.",
+                "- Verify idempotency.",
+                "- Run the regression suite.",
                 "",
                 "## Edge Cases",
                 "- Repeated transitions keep task state consistent.",
+                "- Missing optional inputs do not crash.",
+                "- Partial artifacts do not block recovery.",
             ]
         ),
     )
@@ -296,7 +302,7 @@ def test_sprint_check_fails_when_ready_to_merge_task_has_no_verification_evidenc
     )
 
     assert result.returncode != 0
-    assert "non-empty evidence file" in result.stderr
+    assert "substantive evidence" in result.stderr
 
 
 def test_sprint_check_rejects_non_theking_layout(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 ---
 name: planner
-description: "Implementation planning specialist for {project_slug}. Creates phased plans with task dependencies, risk analysis, and testing strategy. Output must follow theking workflow constraints. Use PROACTIVELY when the user requests a new feature, refactor, or any multi-step change before implementation begins."
+description: "Implementation planning specialist for {project_slug}. Creates phased plans with task dependencies, risk analysis, and testing strategy. Output must follow theking workflow constraints. Use PROACTIVELY when the user requests a new feature, refactor, or any multi-step change before implementation begins. For single-task lightweight flows the planner may return an empty plan and let the main agent proceed directly — do not manufacture extra tasks."
 tools: Read, Grep, Glob
 ---
 
@@ -114,6 +114,26 @@ rubber-stamp security-review round that adds no signal.
 - Identify which tasks can run in parallel
 - Ensure no circular dependencies
 - Minimize the critical path
+
+### 5. 何时召 architect
+
+在把方略提交给 `init-sprint-plan` 之前，先过一遍下列 4 条信号。出现
+任何一条，**必须先召 architect 出 ADR**（写入
+`.theking/context/adr/ADR-NNN-<slug>.md`），再返回此处完成 plan.json。
+此规则只对完整流程生效；轻量流程（单 task sprint）不触发。
+
+1. **跨 module 接口**：方略会引入新的跨模块调用点（新 package 被
+   import、新 HTTP/gRPC 调用链、新 IPC 管道等）
+2. **引入新依赖**：`package.json` / `pyproject.toml` / `go.mod` /
+   `Cargo.toml` 会新增依赖，或显著抬升现有依赖的版本约束
+3. **公共接口变更**：已发布 CLI flag / 配置 schema / REST endpoint /
+   public package API 的 signature 发生变化（删除、重命名、参数顺序
+   调整、默认值语义变化皆算）
+4. **数据迁移**：schema 变更、持久化数据的字段迁移、索引重建、
+   或需要回填脚本
+
+一个方略同时命中多条信号时，仍只出一份 ADR，由 architect 在 ADR 内
+分段归纳。
 
 ## Output Format
 

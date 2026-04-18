@@ -39,6 +39,15 @@ Your review output MUST be a markdown file that starts with a title and contains
 
 ### [MEDIUM] Issue Title
 ...
+
+## Untested Paths
+<!-- Optional section; MUST be filled when applicable (see Approval Criteria).
+     List branches / boundary conditions / error paths that the task's tests
+     did not cover, with file:line references. Use `N/A (docs only)` or a
+     similarly explicit note when the change is trivial. -->
+
+- path/to/file.py:42 — early-return branch when `config is None` is unreachable in tests
+- path/to/file.py:88-95 — exception path from downstream `raises WorkflowError` is not asserted
 ```
 
 The resolved review (after fixes) MUST follow this format:
@@ -85,11 +94,26 @@ The resolved review (after fixes) MUST follow this format:
 - TODO/FIXME without issue numbers
 - Inconsistent formatting
 
+### Test Coverage (HIGH)
+- Uncovered branches in changed functions (if/else arms, early returns, exception paths)
+- Untested boundary values (empty / single-element / max-size / one-past-max)
+- Missing negative-path tests (invalid input, timeout, unauthorized, not-found)
+- Tests that assert on happy path only, with no assertion on error state
+- New public function or exported API added without its own test file entry
+- Changed behavior where only the old assertion was updated (without adding a new assertion for the new behavior)
+
+On non-trivial changes, the reviewer MUST fill the optional
+`## Untested Paths` section in the review artifact below. "Non-trivial"
+means: any change to a function's control flow, any new branch, or any
+change to a public API surface. Docs-only or rename-only changes may
+write `N/A (docs only)` there instead.
+
 ## Approval Criteria
 
 - **Approve**: No CRITICAL or HIGH issues
 - **Changes Requested**: CRITICAL or HIGH issues found — task goes to `changes_requested`
 - **Warning**: Only MEDIUM issues — can proceed with caution
+- **Missing Untested Paths** (on non-trivial changes) counts as a HIGH issue — the reviewer must either fill the section or justify the `N/A` explicitly
 
 ## Workflow
 

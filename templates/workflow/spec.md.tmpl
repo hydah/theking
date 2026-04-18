@@ -12,7 +12,13 @@
      Prevents scope creep during implementation. -->
 
 ## Acceptance
+<!-- Every checkbox must declare how it is verified and where the evidence
+     lives. Allowed 验证方式 values: unit | integration | smoke | e2e |
+     manual-observed. Evidence path can be a file under verification/ or
+     a test identifier like tests/test_x.py::test_y. -->
 - [ ] <!-- Specific, testable criterion. Each should be independently verifiable. -->
+  - 验证方式: <!-- unit | integration | smoke | e2e | manual-observed -->
+  - 证据路径: <!-- verification/<profile>/smoke.md or tests/test_x.py::test_y -->
 
 ## Test Plan
 {test_plan}

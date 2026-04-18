@@ -110,7 +110,7 @@ def test_init_project_creates_theking_scaffold_and_workflow_root(tmp_path: Path)
     assert "build/lint/type/unit + 画像验证" in governance_skill
     assert "Phase 1: 察情" in governance_skill
     assert governance_skill.index("Phase 1: 察情") < governance_skill.index("Phase 2: 议旨")
-    assert "未察案牍、未勘波及，不得擅宣「轻量流程」" in governance_skill
+    assert "未察案牍、未勘波及、未过调研清单，不得擅宣「轻量流程」" in governance_skill
     assert "Scope / Non-Goals / Acceptance / Test Plan / Edge Cases 全部 section 必须保留" in governance_skill
     assert "build/lint/type/unit checks" in governance_skill
     # decree 侧契约：薄入口必含 skill 指针 + 参数注入 + Phase 对照表

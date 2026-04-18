@@ -47,9 +47,15 @@ SPEC_CONTENT = "\n".join(
         "",
         "## Test Plan",
         "- Unit test via pytest.",
+        "- Exercise the happy path.",
+        "- Exercise the error path.",
+        "- Verify idempotency.",
+        "- Run the regression suite.",
         "",
         "## Edge Cases",
-        "- None.",
+        "- Empty input.",
+        "- Boundary value.",
+        "- Concurrent access.",
     ]
 )
 
