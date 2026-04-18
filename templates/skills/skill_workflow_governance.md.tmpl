@@ -295,6 +295,20 @@ stateDiagram-v2
 - `backend.cli` / `backend.job`：至少执行真实入口并核对输出或副作用
 - 将命令、结果、截图/日志等证据写入 `verification/<profile>/`
 
+> **💡 证据合并（推荐模式）**
+>
+> 多个 acceptance 条目的证据**推荐合并到一个文件** `verification/<profile>/evidence.md`，用 `##` 分节。校验逻辑按目录聚合所有文件的 substantive 字符数，单文件和多文件等效。合并减少 tool call 次数和 context 占用。
+>
+> ```markdown
+> # Evidence
+> ## acceptance-1-name
+> $ command-that-was-run
+> Expected output observed. Exit 0.
+> ## acceptance-2-name
+> $ another-command
+> Result matches spec. Verified.
+> ```
+
 **⛔ 证据闸（硬规则 #9 的 task 级落点）**：
 `{theking_cmd} check` 在 `ready_to_merge` / `done` 时会调用
 `has_substantive_verification_evidence`——profile 目录下所有文件

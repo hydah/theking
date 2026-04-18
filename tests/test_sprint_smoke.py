@@ -526,3 +526,102 @@ def test_skill_md_hard_rule_9_names_load_bearing_keywords() -> None:
         f"{load_bearing_keywords}. Got:\n{rule_block}"
     )
 
+
+# --- Single-task sprint verification merge (sprint-007 TASK-002) ----------
+
+
+def test_single_task_sprint_passes_with_task_level_evidence(
+    tmp_path: Path,
+) -> None:
+    """Single-task sprint should pass sprint-smoke when only task-level
+    verification/<profile>/ has substantive evidence — no sprint-level
+    evidence dir required."""
+
+    sprint_dir = _bootstrap_sprint(
+        tmp_path,
+        task_types=[("task-a", "general")],
+    )
+    # Write evidence only at task level, NOT at sprint level
+    task_dir = sorted((sprint_dir / "tasks").iterdir())[0]
+    write_text(
+        task_dir / "verification" / "cli" / "smoke.md",
+        _substantive_evidence(),
+    )
+
+    result = run_cli(["sprint-smoke", "--sprint-dir", str(sprint_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, (
+        f"Single-task sprint should pass with task-level evidence only. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def test_single_task_sprint_fails_without_any_evidence(
+    tmp_path: Path,
+) -> None:
+    """Single-task sprint should fail when neither task-level nor
+    sprint-level evidence exists."""
+
+    sprint_dir = _bootstrap_sprint(
+        tmp_path,
+        task_types=[("task-a", "general")],
+    )
+    # No evidence anywhere
+
+    result = run_cli(["sprint-smoke", "--sprint-dir", str(sprint_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, (
+        f"Single-task sprint should fail without any evidence. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def test_single_task_sprint_fails_with_placeholder_task_evidence(
+    tmp_path: Path,
+) -> None:
+    """Single-task sprint should fail when task-level evidence is
+    placeholder-only (< 40 substantive chars)."""
+
+    sprint_dir = _bootstrap_sprint(
+        tmp_path,
+        task_types=[("task-a", "general")],
+    )
+    task_dir = sorted((sprint_dir / "tasks").iterdir())[0]
+    write_text(
+        task_dir / "verification" / "cli" / "smoke.md",
+        "<!-- TODO: fill later -->\n",
+    )
+
+    result = run_cli(["sprint-smoke", "--sprint-dir", str(sprint_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, (
+        f"Single-task sprint should fail with placeholder evidence. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def test_multi_task_sprint_does_not_use_single_task_fallback(
+    tmp_path: Path,
+) -> None:
+    """2-task sprint should NOT fall back to task-level evidence.
+    Even if all tasks have task-level evidence, sprint-level is required."""
+
+    sprint_dir = _bootstrap_sprint(
+        tmp_path,
+        task_types=[("task-a", "general"), ("task-b", "general")],
+    )
+    # Write evidence at task level for both tasks
+    for task_dir in sorted((sprint_dir / "tasks").iterdir()):
+        write_text(
+            task_dir / "verification" / "cli" / "smoke.md",
+            _substantive_evidence(),
+        )
+    # No sprint-level evidence
+
+    result = run_cli(["sprint-smoke", "--sprint-dir", str(sprint_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, (
+        f"Multi-task sprint should fail without sprint-level evidence. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+

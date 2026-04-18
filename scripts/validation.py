@@ -909,12 +909,28 @@ def validate_sprint_smoke_evidence(sprint_dir: Path) -> None:
             f"task(s) in {sprint_dir.name}:\n  - {bullets}"
         )
 
+    # Single-task sprint optimization: when there is exactly one task,
+    # task-level verification evidence is equivalent to sprint-level
+    # evidence (there is no cross-task integration surface to test).
+    # Fall back to the task's own verification/<profile>/ directory
+    # when the sprint-level directory is missing.
+    single_task_fallback = len(task_dirs) == 1
+
     verification_dir = sprint_dir / "verification"
     missing: list[str] = []
     insufficient: list[str] = []
     for profile in sorted(required_profiles):
         profile_dir = verification_dir / execution_profile_dir(profile)
         if not profile_dir.is_dir():
+            # Try task-level fallback for single-task sprints
+            if single_task_fallback:
+                task_profile_dir = task_dirs[0] / "verification" / execution_profile_dir(profile)
+                if (
+                    not task_profile_dir.is_symlink()
+                    and task_profile_dir.is_dir()
+                    and has_substantive_verification_evidence(task_profile_dir)
+                ):
+                    continue
             missing.append(profile)
             continue
         if not has_substantive_verification_evidence(profile_dir):

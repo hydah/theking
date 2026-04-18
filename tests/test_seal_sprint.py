@@ -185,6 +185,48 @@ def bootstrap_sprint_with_one_task(tmp_path: Path) -> Path:
     return workflow_root(tmp_path) / "sprints" / "sprint-001-foundation"
 
 
+def bootstrap_sprint_with_two_tasks(tmp_path: Path) -> Path:
+    run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+    run_cli(
+        [
+            "init-sprint",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--theme",
+            "foundation",
+        ],
+        cwd=tmp_path,
+    )
+    plan = {
+        "tasks": [
+            {"slug": "task-a", "title": "Task A", "task_type": "general"},
+            {"slug": "task-b", "title": "Task B", "task_type": "general"},
+        ],
+    }
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text(json.dumps(plan), encoding="utf-8")
+    run_cli(
+        [
+            "init-sprint-plan",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+    return workflow_root(tmp_path) / "sprints" / "sprint-001-foundation"
+
+
 def test_seal_sprint_succeeds_when_all_tasks_done(tmp_path: Path) -> None:
     sprint_dir = bootstrap_sprint_with_one_task(tmp_path)
     force_task_to_done(sprint_dir / "tasks" / "TASK-001-task-a")
@@ -426,20 +468,17 @@ def test_seal_sprint_refuses_without_sprint_smoke_evidence(tmp_path: Path) -> No
     """TASK-003 闸 3: `seal-sprint` must fail before writing frontmatter
     when `sprint_dir/verification/<profile>/` has no substantive evidence.
 
-    Strategy: build a sprint where all tasks are done (so the existing
-    terminal-status guard passes), then REMOVE any sprint-level
-    evidence dir that the helpers may have set up, then call
-    `seal-sprint` and assert it fails AND `sprint.md` has NOT been
-    stamped with `status: sealed`.
+    Uses a multi-task sprint because single-task sprints now fall back
+    to task-level evidence (sprint-007 TASK-002 optimization). The
+    sprint-level gate is only strict for 2+ task sprints.
     """
 
-    sprint_dir = bootstrap_sprint_with_one_task(tmp_path)
-    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
-    force_task_to_done(task_dir)
+    sprint_dir = bootstrap_sprint_with_two_tasks(tmp_path)
+    for task_dir in sorted((sprint_dir / "tasks").iterdir()):
+        if task_dir.name.startswith("TASK-"):
+            force_task_to_done(task_dir)
 
-    # Ensure no sprint-level evidence exists. Task-level evidence
-    # (task_dir/verification/cli) is kept — this test guards the
-    # sprint-level gate specifically.
+    # Ensure no sprint-level evidence exists.
     sprint_verification = sprint_dir / "verification"
     if sprint_verification.exists():
         import shutil as _shutil

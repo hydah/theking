@@ -449,6 +449,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_slug_argument(status)
     status.set_defaults(handler=handle_status)
 
+    finalize = add_command_parser(
+        subparsers,
+        "finalize",
+        help_text="Run check + advance to ready_to_merge + advance to done in one call.",
+        example="workflowctl finalize --task-dir .theking/workflows/my-app/sprints/sprint-001-foundation/tasks/TASK-001-demo",
+    )
+    finalize.add_argument("--task-dir", required=True)
+    finalize.set_defaults(handler=handle_finalize)
+
     return parser
 
 
@@ -1356,6 +1365,53 @@ def handle_status(args: argparse.Namespace) -> None:
         )
 
     print("\n".join(lines))
+
+
+def handle_finalize(args: argparse.Namespace) -> None:
+    """Convenience wrapper: check + advance to ready_to_merge + advance to done.
+
+    Each step runs full validation. If any step fails, the command stops
+    with the task unchanged (or at the last successful status).
+    """
+
+    input_task_dir = Path(args.task_dir).expanduser()
+    if input_task_dir.is_symlink():
+        raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
+    task_dir = input_task_dir.resolve()
+
+    validate_task_dir(task_dir)
+    task_paths = derive_task_paths(task_dir)
+    task_data, _body = load_task_document(task_paths.task_md)
+    current_status = stringify(task_data["status"])
+
+    # Already done — idempotent exit.
+    if current_status == "done":
+        print(f"Task already done: {task_dir}")
+        return
+
+    sprint_md = task_paths.sprint_dir / "sprint.md"
+
+    # Determine which transitions to apply.
+    transitions = []
+    if current_status != "ready_to_merge":
+        transitions.append("ready_to_merge")
+    transitions.append("done")
+
+    for target_status in transitions:
+        task_data_now, body_now = load_task_document(task_paths.task_md)
+        original_content = task_paths.task_md.read_text(encoding="utf-8")
+        original_sprint_content = sprint_md.read_text(encoding="utf-8")
+        updated_task = apply_status_transition(task_data_now, target_status)
+        try:
+            write_task_document(task_paths.task_md, updated_task, body_now)
+            validate_task_dir(task_dir)
+            update_sprint_overview(sprint_md)
+        except Exception:
+            task_paths.task_md.write_text(original_content, encoding="utf-8")
+            sprint_md.write_text(original_sprint_content, encoding="utf-8")
+            raise
+
+    print(f"Finalized {task_dir} -> done")
 
 
 # --- Shared helpers ---
