@@ -259,6 +259,31 @@ stateDiagram-v2
 
 **写 plan.json 前先读 `.theking/agents/planner.md`**：那里有 task_type 决策树与兼容矩阵，能帮你一次把 `task_type` / `execution_profile` 选对，避免 `init-sprint-plan` 反复拒执。
 
+#### Task Bundles（任务捆束）
+
+当 2-3 个 task 紧耦合（一个不能脱离另一个被有意义地验证），planner 可在 `plan.json` 中声明 **bundle**：
+
+```json
+{{
+  "tasks": [...],
+  "bundles": [
+    {{
+      "slug": "core-and-streaming",
+      "tasks": ["core-layer", "streaming-session"],
+      "justification": "streaming 是 core 的唯一调用方；分开验证无意义"
+    }}
+  ]
+}}
+```
+
+Bundle 准入规则（`init-sprint-plan` 校验）：
+- 每个 bundle 包含 2-3 个 task（不多不少）
+- bundle 内 task 必须有 `depends_on` 关系（证明耦合是真实的）
+- planner 必须提供 `justification`（一句话解释为什么不能独立 review）
+- 同一个 task 不能出现在多个 bundle 中
+
+`init-sprint-plan` 会在每个 bundled task 的 task.md 里写入 `bundle: <slug>` 字段。独立 task 不含此字段。
+
 #### 轻量流程
 
 1. 创建单 task sprint（跳过 planner）：
@@ -396,6 +421,40 @@ g. 若尚有未解决 findings → 再开一轮 init-review-round；否则回步
 ```
 
 **⛔ 禁止**：在 review 轮次里直接改代码后把状态从 `in_review` 跳回 `in_review` 并标 resolved，**必经 `changes_requested` → `red`/`green`**。
+
+#### ⚡ Bundled Task 流程（task.md 含 `bundle:` 字段时适用）
+
+当多个 task 共享同一个 `bundle:` 值时，它们形成**统一实现 + review 单元**：
+
+**实现（步骤 3-4）**：
+- 为 bundle 内所有 task 一起写 skeleton + 测试（一个 red phase 覆盖整个 bundle）
+- 为 bundle 内所有 task 一起写实现（一个 green phase 覆盖整个 bundle）
+- 状态推进仍然逐 task 执行：每个 task 分别 `planned → red → green`
+- 关键：**工作是合一的，状态推进是分别的**
+
+**Review（步骤 7）**：
+- 对 bundle 内每个 task 分别执行 `init-review-round`
+- code-reviewer 在**一次 review 中审视整个 bundle**——review findings 写入各自 task 的 `review/code-review-round-NNN.md`，但 findings 应交叉引用兄弟 task
+- 产出一套连贯的 findings，考虑 bundle 整体，然后分配到对应 task 的 review 文件
+
+**收尾（步骤 8）**：
+- 每个 task 独立到达 `ready_to_merge → done`
+- bundle 内所有 task 应在进入下一个独立 task 之前全部 `done`
+
+**状态流**：
+```
+TASK-001: draft → planned ─┐
+TASK-003: draft → planned ─┤
+                           ↓
+           Bundle: red (skeleton + tests for both)
+                           ↓
+           Bundle: green (implementation for both)
+                           ↓
+           Bundle: in_review (one review covering both)
+                           ↓
+TASK-001: ready_to_merge → done
+TASK-003: ready_to_merge → done
+```
 
 #### 🚨 其他异常分支
 

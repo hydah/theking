@@ -17,6 +17,7 @@ try:
         ALLOWED_TRANSITIONS,
         EXECUTION_PROFILE_ALIASES,
         EXECUTION_PROFILE_DIRS,
+        MAX_BUNDLE_SIZE,
         SPRINT_NAME_PATTERN,
         TASK_ID_PATTERN,
         THEKING_DIRNAME,
@@ -30,6 +31,7 @@ except ImportError:
         ALLOWED_TRANSITIONS,
         EXECUTION_PROFILE_ALIASES,
         EXECUTION_PROFILE_DIRS,
+        MAX_BUNDLE_SIZE,
         SPRINT_NAME_PATTERN,
         TASK_ID_PATTERN,
         THEKING_DIRNAME,
@@ -249,6 +251,16 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
         dep_str = stringify(dep)
         if TASK_ID_PATTERN.fullmatch(dep_str) is None:
             raise WorkflowError(f"Invalid depends_on entry: {dep_str}")
+
+    # Optional bundle field — validate slug format if present
+    bundle_value = task_data.get("bundle")
+    if bundle_value is not None:
+        bundle_str = stringify(bundle_value).strip()
+        if bundle_str and slugify(bundle_str) != bundle_str:
+            raise WorkflowError(
+                f"bundle must be a valid slug (got {bundle_str!r}); "
+                "use lowercase alphanumeric with hyphens"
+            )
 
     return {
         **task_data,
@@ -839,6 +851,31 @@ def validate_sprint_dir(sprint_dir: Path) -> None:
 
     check_dag(all_depends_on)
 
+    # --- Bundle consistency check (I-012) ---
+    # Verify that tasks claiming the same bundle slug form valid bundles
+    # (2-3 members). Source of truth is the bundle: field in each task.md.
+    bundle_groups: dict[str, list[str]] = {}
+    for task_dir in task_dirs:
+        task_md = task_dir / "task.md"
+        task_data = parse_frontmatter(task_md.read_text(encoding="utf-8"))
+        bundle_value = task_data.get("bundle")
+        if bundle_value is not None:
+            bundle_str = stringify(bundle_value).strip()
+            if bundle_str:
+                bundle_groups.setdefault(bundle_str, []).append(task_dir.name)
+
+    for bundle_slug, members in bundle_groups.items():
+        if len(members) < 2:
+            raise WorkflowError(
+                f"Bundle {bundle_slug!r} has only {len(members)} task(s); "
+                "bundles require 2-3 tasks"
+            )
+        if len(members) > MAX_BUNDLE_SIZE:
+            raise WorkflowError(
+                f"Bundle {bundle_slug!r} has {len(members)} tasks; "
+                f"maximum is {MAX_BUNDLE_SIZE}"
+            )
+
 
 # --- Sprint-level smoke gate (ADR-003 / sprint-004 TASK-003) ----------------
 
@@ -1295,6 +1332,11 @@ def serialize_task_frontmatter(task_data: dict[str, Any]) -> str:
     if task_data.get("flow") is not None:
         flow_value = normalize_task_flow(task_data["flow"])
         lines.append(f"flow: {flow_value}")
+    # Preserve optional `bundle` field if present (I-012 task bundle).
+    if task_data.get("bundle") is not None:
+        bundle_str = stringify(task_data["bundle"]).strip()
+        if bundle_str:
+            lines.append(f"bundle: {bundle_str}")
     lines.append("---")
     return "\n".join(lines)
 

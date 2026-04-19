@@ -750,7 +750,7 @@ def test_advance_status_updates_status_and_history_for_non_review_transition(tmp
     assert frontmatter["status_history"] == ["draft", "planned"]
     assert frontmatter["current_review_round"] == 0
     sprint_text = (sprint_dir / "sprint.md").read_text(encoding="utf-8")
-    assert "| TASK-001-task-a | general | backend.cli | — | planned |" in sprint_text
+    assert "| TASK-001-task-a | general | backend.cli | \u2014 | \u2014 | planned |" in sprint_text
 
 
 def test_advance_status_rejects_illegal_transition_without_mutation(tmp_path: Path) -> None:
@@ -820,7 +820,7 @@ def test_init_review_round_from_green_sets_first_round_and_scaffolds_code_review
     assert "## Context" in review_file.read_text(encoding="utf-8")
     assert "## Findings" in review_file.read_text(encoding="utf-8")
     sprint_text = (sprint_dir / "sprint.md").read_text(encoding="utf-8")
-    assert "| TASK-001-task-a | general | backend.cli | — | in_review |" in sprint_text
+    assert "| TASK-001-task-a | general | backend.cli | \u2014 | \u2014 | in_review |" in sprint_text
 
 
 def test_init_review_round_from_green_scaffolds_security_review_when_required(tmp_path: Path) -> None:

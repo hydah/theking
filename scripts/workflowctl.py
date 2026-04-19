@@ -33,6 +33,7 @@ try:
         write_decree_checkpoint,
     )
     from .sprint_plan import (
+        parse_bundles,
         parse_plan_entries,
         read_sprint_frontmatter,
         reject_sealed_sprint_for_writes,
@@ -105,6 +106,7 @@ except ImportError:
         write_decree_checkpoint,
     )
     from sprint_plan import (
+        parse_bundles,
         parse_plan_entries,
         read_sprint_frontmatter,
         reject_sealed_sprint_for_writes,
@@ -819,6 +821,21 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
 
     parsed = parse_plan_entries(task_entries, tasks_dir)
 
+    # --- Parse bundles (optional; backward-compatible) ---
+    bundle_entries = plan_data.get("bundles", [])
+    if not isinstance(bundle_entries, list):
+        raise WorkflowError("'bundles' must be an array when provided")
+    bundle_map: dict[str, str] = {}  # task_slug -> bundle_slug
+    if bundle_entries:
+        bundles = parse_bundles(
+            bundle_entries,
+            parsed["slug_to_id"],
+            parsed["deps_by_slug"],
+        )
+        for bundle_slug, info in bundles.items():
+            for task_slug in info["task_slugs"]:
+                bundle_map[task_slug] = bundle_slug
+
     # Two-pass validation: first collect every per-task problem, then report
     # them all at once. This lets the agent fix multiple broken rows in a
     # single edit cycle instead of being drip-fed one error per run
@@ -901,6 +918,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 required_agents=entry["required_agents"],
                 depends_on=entry["depends_on"],
                 spec_hints=entry.get("spec_hints") or None,
+                bundle=bundle_map.get(entry.get("_slug")) if bundle_map else None,
             )
 
         update_sprint_overview(sprint_dir / "sprint.md")

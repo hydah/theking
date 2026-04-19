@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from .constants import TASK_ID_PATTERN, WorkflowError
+    from .constants import MAX_BUNDLE_SIZE, TASK_ID_PATTERN, WorkflowError
     from .validation import (
         check_dag,
         default_test_plan,
@@ -25,7 +25,7 @@ try:
         stringify,
     )
 except ImportError:
-    from constants import TASK_ID_PATTERN, WorkflowError
+    from constants import MAX_BUNDLE_SIZE, TASK_ID_PATTERN, WorkflowError
     from validation import (
         check_dag,
         default_test_plan,
@@ -259,6 +259,129 @@ def parse_plan_entries(
     }
 
 
+def parse_bundles(
+    bundle_entries: list[Any],
+    slug_to_task_id: dict[str, str],
+    deps_by_slug: dict[str, list[str]],
+) -> dict[str, dict[str, Any]]:
+    """Parse and validate bundle entries from plan.json.
+
+    Returns ``{bundle_slug: {"slug": ..., "task_slugs": [...], "task_ids": [...], "justification": ...}}``.
+    Aggregates all errors and raises a single ``WorkflowError`` listing them all.
+    """
+
+    errors: list[str] = []
+    seen_slugs: set[str] = set()
+    task_to_bundle: dict[str, str] = {}  # task_slug -> bundle_slug (overlap check)
+    result: dict[str, dict[str, Any]] = {}
+
+    for index, entry in enumerate(bundle_entries):
+        label = f"Bundle entry {index}"
+
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be an object")
+            continue
+
+        # --- Required fields ---
+        for field in ("slug", "tasks", "justification"):
+            if field not in entry:
+                errors.append(f"{label} is missing required field: {field}")
+        if any(f not in entry for f in ("slug", "tasks", "justification")):
+            continue  # skip further validation if structure is broken
+
+        # --- slug ---
+        raw_slug = entry["slug"]
+        if not isinstance(raw_slug, str) or not raw_slug.strip():
+            errors.append(f"{label} slug must be a non-empty string")
+            continue
+        bundle_slug = slugify(raw_slug)
+        if bundle_slug in seen_slugs:
+            errors.append(f"[{bundle_slug}] duplicate bundle slug")
+            continue
+        seen_slugs.add(bundle_slug)
+        label = f"[{bundle_slug}]"
+
+        # --- justification ---
+        justification = entry["justification"]
+        if not isinstance(justification, str) or not justification.strip():
+            errors.append(f"{label} justification must be a non-empty string")
+
+        # --- tasks list ---
+        task_refs = entry["tasks"]
+        if not isinstance(task_refs, list):
+            errors.append(f"{label} tasks must be a list")
+            continue
+        if len(task_refs) < 2:
+            errors.append(
+                f"{label} bundle must contain at least 2 tasks (got {len(task_refs)})"
+            )
+            continue
+        if len(task_refs) > MAX_BUNDLE_SIZE:
+            errors.append(
+                f"{label} bundle must contain at most {MAX_BUNDLE_SIZE} tasks "
+                f"(got {len(task_refs)})"
+            )
+            continue
+
+        # --- resolve task refs ---
+        resolved_slugs: list[str] = []
+        resolved_ids: list[str] = []
+        for ref in task_refs:
+            if not isinstance(ref, str):
+                errors.append(f"{label} task reference must be a string")
+                continue
+            ref_slug = slugify(ref)
+            if ref_slug not in slug_to_task_id:
+                errors.append(f"{label} bundle task {ref_slug!r} not found in plan tasks")
+                continue
+            if ref_slug in task_to_bundle:
+                errors.append(
+                    f"{label} task {ref_slug!r} is already in bundle "
+                    f"{task_to_bundle[ref_slug]!r}"
+                )
+                continue
+            task_to_bundle[ref_slug] = bundle_slug
+            resolved_slugs.append(ref_slug)
+            resolved_ids.append(slug_to_task_id[ref_slug])
+
+        if len(resolved_slugs) < 2:
+            continue  # already reported individual errors
+
+        # --- depends_on relationship check ---
+        has_dependency = False
+        for slug_a in resolved_slugs:
+            task_id_a = slug_to_task_id[slug_a]
+            for slug_b in resolved_slugs:
+                if slug_a == slug_b:
+                    continue
+                # Check if slug_b depends on slug_a (i.e. task_id_a in deps of slug_b)
+                if task_id_a in deps_by_slug.get(slug_b, []):
+                    has_dependency = True
+                    break
+            if has_dependency:
+                break
+        if not has_dependency:
+            errors.append(
+                f"{label} bundle tasks must have at least one depends_on "
+                "relationship between them (proves coupling)"
+            )
+            continue
+
+        result[bundle_slug] = {
+            "slug": bundle_slug,
+            "task_slugs": resolved_slugs,
+            "task_ids": resolved_ids,
+            "justification": stringify(justification).strip(),
+        }
+
+    if errors:
+        header = f"Plan file has {len(errors)} invalid bundle(s):"
+        bullets = "\n  - ".join(errors)
+        raise WorkflowError(f"{header}\n  - {bullets}")
+
+    return result
+
+
 def write_task_files(
     task_dir: Path,
     *,
@@ -271,6 +394,7 @@ def write_task_files(
     required_agents: list[str],
     depends_on: list[str],
     spec_hints: dict[str, list[str]] | None = None,
+    bundle: str | None = None,
 ) -> None:
     """Write task.md and spec.md into a task directory."""
     depends_on_block = (
@@ -278,6 +402,7 @@ def write_task_files(
         if depends_on
         else ""
     )
+    bundle_block = f"bundle: {bundle}\n" if bundle else ""
     task_md = task_dir / "task.md"
     task_md.write_text(
         render_template(
@@ -290,6 +415,7 @@ def write_task_files(
             requires_security_review=str(requires_security_review).lower(),
             required_agents_block="\n".join(f"  - {a}" for a in required_agents),
             depends_on_block=depends_on_block,
+            bundle_block=bundle_block,
         ),
         encoding="utf-8",
     )
@@ -376,12 +502,13 @@ def render_spec_markdown(
 
 def update_sprint_overview(sprint_md_path: Path) -> None:
     rows: list[str] = []
-    rows.append("| Task | Type | Profile | Depends On | Status |")
-    rows.append("|------|------|---------|-----------|--------|")
+    rows.append("| Task | Type | Profile | Depends On | Bundle | Status |")
+    rows.append("|------|------|---------|-----------|--------|--------|")
     tasks_dir = sprint_md_path.parent / "tasks"
     for entry in collect_task_overview_entries(tasks_dir):
         rows.append(
-            f"| {entry['task_id']} | {entry['task_type']} | {entry['execution_profile']} | {entry['depends_on']} | {entry['status']} |"
+            f"| {entry['task_id']} | {entry['task_type']} | {entry['execution_profile']} "
+            f"| {entry['depends_on']} | {entry['bundle']} | {entry['status']} |"
         )
 
     overview_table = "\n".join(rows)
@@ -418,6 +545,7 @@ def collect_task_overview_entries(tasks_dir: Path) -> list[dict[str, str]]:
                 "depends_on": ", ".join(stringify(dep) for dep in depends_on)
                 if isinstance(depends_on, list) and depends_on
                 else "\u2014",
+                "bundle": stringify(task_data.get("bundle", "")) or "\u2014",
                 "status": stringify(task_data["status"]),
             }
         )
