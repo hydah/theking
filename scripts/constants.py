@@ -16,7 +16,7 @@ ALLOWED_STATUSES = {
 
 ALLOWED_TRANSITIONS = {
     "draft": {"planned"},
-    "planned": {"red"},
+    "planned": {"red", "green"},  # mechanical flow: planned -> green (skip red)
     "red": {"green"},
     "green": {"in_review"},
     "in_review": {"changes_requested", "ready_to_merge"},

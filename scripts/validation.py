@@ -266,7 +266,10 @@ SPEC_SECTION_COUNT_THRESHOLDS_LIGHT: dict[str, int] = {
     "Test Plan": 3,
     "Edge Cases": 1,
 }
-ALLOWED_TASK_FLOWS = {"full", "lightweight"}
+SPEC_SECTION_COUNT_THRESHOLDS_MECHANICAL: dict[str, int] = {
+    # mechanical flow: no Test Plan / Edge Cases minimum required
+}
+ALLOWED_TASK_FLOWS = {"full", "lightweight", "mechanical"}
 
 
 def normalize_task_flow(value: Any) -> str:
@@ -285,18 +288,24 @@ def normalize_task_flow(value: Any) -> str:
 
 
 def count_spec_section_items(section_body: str) -> int:
-    """Count top-level bullet items under a spec section.
+    """Count top-level list items under a spec section.
 
     Rules:
     - Strip HTML comments first (they are placeholders, not content).
-    - Only lines with zero leading whitespace that start with `-`, `*`, or `+`
-      count. Indented (nested) bullets are not new items.
+    - Only lines with zero leading whitespace count.
+    - Unordered bullets: lines starting with `-`, `*`, or `+` followed by space.
+    - Ordered items: lines starting with `<digits>.` or `<digits>)` followed by
+      space.  AI runtimes (Cursor, Codex, CodeBuddy) commonly generate numbered
+      lists; these are valid Markdown list items and must be accepted.
     - Checkbox bullets (`- [ ]` or `- [x]`) count as one item.
+    - Indented (nested) bullets are not new items.
     """
     stripped = re.sub(r"<!--.*?-->", "", section_body, flags=re.DOTALL)
     count = 0
     for raw_line in stripped.splitlines():
-        if re.match(r"^[-*+]\s+", raw_line):
+        # Unordered: - item / * item / + item
+        # Ordered:   1. item / 2) item
+        if re.match(r"^(?:[-*+]|\d+[.)]) \s*\S", raw_line):
             count += 1
     return count
 
@@ -316,6 +325,8 @@ def validate_spec_section_counts(spec_md: Path, *, flow: str) -> None:
     thresholds = (
         SPEC_SECTION_COUNT_THRESHOLDS_FULL
         if flow == "full"
+        else SPEC_SECTION_COUNT_THRESHOLDS_MECHANICAL
+        if flow == "mechanical"
         else SPEC_SECTION_COUNT_THRESHOLDS_LIGHT
     )
     for heading, minimum in thresholds.items():
@@ -341,7 +352,15 @@ def validate_spec(
     if not require_content and is_legacy_spec_structure(sections):
         return
 
-    for heading in ("Scope", "Non-Goals", "Acceptance", "Test Plan", "Edge Cases"):
+    effective_flow = normalize_task_flow(flow) if flow else "full"
+
+    # mechanical flow: only Scope + Acceptance required; others optional
+    if effective_flow == "mechanical":
+        required_sections = ("Scope", "Acceptance")
+    else:
+        required_sections = ("Scope", "Non-Goals", "Acceptance", "Test Plan", "Edge Cases")
+
+    for heading in required_sections:
         section_body = sections.get(heading)
         if section_body is None:
             raise WorkflowError(f"spec.md is missing required section: {heading}")

@@ -59,6 +59,56 @@ FULL_FLOW_SPEC = """# Task Spec
 - Concurrent access.
 """
 
+# Variant: AI-generated spec with ordered (numbered) lists — must also pass.
+FULL_FLOW_SPEC_ORDERED = """# Task Spec
+
+## Scope
+- Implement feature X.
+
+## Non-Goals
+- Avoid unrelated cleanup.
+
+## Acceptance
+- [ ] Behavior Y is testable.
+
+## Test Plan
+1. Unit test a.
+2. Unit test b.
+3. Unit test c.
+4. Integration test d.
+5. Regression e.
+
+## Edge Cases
+1. Empty input.
+2. Boundary value.
+3. Concurrent access.
+"""
+
+# Variant: mixed ordered + unordered lists — must also pass.
+FULL_FLOW_SPEC_MIXED = """# Task Spec
+
+## Scope
+- Implement feature X.
+
+## Non-Goals
+- Avoid unrelated cleanup.
+
+## Acceptance
+- [ ] Behavior Y is testable.
+
+## Test Plan
+- Unit test a.
+2. Unit test b.
+- Unit test c.
+4. Integration test d.
+- Regression e.
+
+## Edge Cases
+- Empty input.
+2. Boundary value.
+- Concurrent access.
+"""
+
 LIGHTWEIGHT_FLOW_SPEC = """# Task Spec
 
 ## Scope
@@ -104,6 +154,15 @@ LEGACY_SPEC = """# Task Spec
         ("- a\n<!-- still placeholder -->\n", 1),
         ("*Not a bullet in our counting*\n", 0),  # only leading -/*/+ top-level
         ("  - indented only\n", 0),
+        # --- Ordered (numbered) lists — AI runtimes commonly generate these ---
+        ("1. first\n2. second\n3. third\n", 3),
+        ("1. first\n   - nested detail\n2. second\n", 2),  # nested not top-level
+        ("1. first\n\n2. second\n\n3. third\n", 3),  # blank lines between
+        ("1) first\n2) second\n3) third\n", 3),  # paren style
+        ("  1. indented ordered\n", 0),  # indented — not top-level
+        # --- Mixed ordered + unordered ---
+        ("- bullet a\n1. ordered b\n- bullet c\n", 3),
+        ("1. ordered\n- unordered\n2. ordered again\n", 3),
     ],
 )
 def test_count_spec_section_items_counts_top_level_bullets(
@@ -135,6 +194,21 @@ def test_full_flow_accepts_exactly_meeting_thresholds(tmp_path: Path) -> None:
     spec = tmp_path / "spec.md"
     spec.write_text(FULL_FLOW_SPEC, encoding="utf-8")
     # Should not raise.
+    validate_spec_section_counts(spec, flow="full")
+
+
+def test_full_flow_accepts_ordered_list_spec(tmp_path: Path) -> None:
+    """AI runtimes (Cursor/Codex/CodeBuddy) commonly generate numbered lists."""
+    spec = tmp_path / "spec.md"
+    spec.write_text(FULL_FLOW_SPEC_ORDERED, encoding="utf-8")
+    # Should not raise — ordered lists are valid markdown lists.
+    validate_spec_section_counts(spec, flow="full")
+
+
+def test_full_flow_accepts_mixed_list_spec(tmp_path: Path) -> None:
+    """Specs may mix ordered and unordered lists within the same section."""
+    spec = tmp_path / "spec.md"
+    spec.write_text(FULL_FLOW_SPEC_MIXED, encoding="utf-8")
     validate_spec_section_counts(spec, flow="full")
 
 
