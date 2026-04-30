@@ -619,3 +619,54 @@ def test_init_task_infers_execution_profile_from_task_type(
 
     assert frontmatter["execution_profile"] == expected_execution_profile
     assert frontmatter["verification_profile"] == [expected_execution_profile]
+
+
+@pytest.mark.parametrize(
+    ("task_type", "expected_execution_profile", "expected_review_mode"),
+    [
+        ("general", "backend.cli", "light"),
+        ("auth", "backend.http", "full"),
+        ("api", "backend.http", "full"),
+        ("e2e", "web.browser", "full"),
+    ],
+)
+def test_init_task_infers_review_mode_from_task_contract(
+    tmp_path: Path,
+    task_type: str,
+    expected_execution_profile: str,
+    expected_review_mode: str,
+) -> None:
+    bootstrap_sprint(tmp_path)
+
+    result = run_cli(
+        [
+            "init-task",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--slug",
+            f"{task_type}-review-mode",
+            "--title",
+            f"{task_type.title()} Review Mode",
+            "--task-type",
+            task_type,
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    task_md = (
+        workflow_root(tmp_path)
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / f"TASK-001-{task_type}-review-mode"
+        / "task.md"
+    )
+    frontmatter = parse_frontmatter(task_md.read_text(encoding="utf-8"))
+
+    assert frontmatter["execution_profile"] == expected_execution_profile
+    assert frontmatter["review_mode"] == expected_review_mode

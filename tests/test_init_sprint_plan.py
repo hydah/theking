@@ -593,6 +593,11 @@ def test_init_sprint_plan_seeds_spec_from_hint_fields(tmp_path: Path) -> None:
                     "non_goals": ["Do not refactor Z"],
                     "acceptance": ["`go build ./...` passes", "No AKID strings remain"],
                     "edge_cases": ["Empty env var should stay empty"],
+                    "spec_hints": {
+                        "code_patterns": ["Follow scripts/workflowctl.py handle_init_task"],
+                        "test_helpers": ["Reuse run_cli helper"],
+                        "related_tasks": ["TASK-000-docs"],
+                    },
                 }
             ]
         },
@@ -628,6 +633,67 @@ def test_init_sprint_plan_seeds_spec_from_hint_fields(tmp_path: Path) -> None:
     assert "- [ ] `go build ./...` passes" in content
     assert "- [ ] No AKID strings remain" in content
     assert "- Empty env var should stay empty" in content
+    assert "## Implementation Hints" in content
+    assert "Follow scripts/workflowctl.py handle_init_task" in content
+    assert "Reuse run_cli helper" in content
+    assert "TASK-000-docs" in content
+
+
+def test_init_sprint_plan_infers_and_normalizes_review_mode(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {
+            "tasks": [
+                {"slug": "general-task", "title": "General Task", "task_type": "general"},
+                {"slug": "auth-task", "title": "Auth Task", "task_type": "auth"},
+                {"slug": "api-task", "title": "API Task", "task_type": "api"},
+                {"slug": "e2e-task", "title": "E2E Task", "task_type": "e2e"},
+                {
+                    "slug": "forced-full",
+                    "title": "Forced Full",
+                    "task_type": "general",
+                    "review_mode": "FULL",
+                },
+                {
+                    "slug": "forced-light",
+                    "title": "Forced Light",
+                    "task_type": "general",
+                    "review_mode": "LiGhT",
+                },
+            ]
+        },
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--project-dir",
+            str(tmp_path / "demo-app"),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    tasks_dir = workflow_root(tmp_path) / "sprints" / "sprint-001-foundation" / "tasks"
+    expected = {
+        "TASK-001-general-task": "review_mode: light",
+        "TASK-002-auth-task": "review_mode: full",
+        "TASK-003-api-task": "review_mode: full",
+        "TASK-004-e2e-task": "review_mode: full",
+        "TASK-005-forced-full": "review_mode: full",
+        "TASK-006-forced-light": "review_mode: light",
+    }
+
+    for task_name, expected_line in expected.items():
+        task_text = (tasks_dir / task_name / "task.md").read_text(encoding="utf-8")
+        assert expected_line in task_text
 
 
 def test_init_sprint_plan_rejects_non_list_spec_hint(tmp_path: Path) -> None:
@@ -663,6 +729,77 @@ def test_init_sprint_plan_rejects_non_list_spec_hint(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "must be a list of strings" in result.stderr
+
+
+def test_init_sprint_plan_rejects_non_string_nested_spec_hint_item(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {
+            "tasks": [
+                {
+                    "slug": "task-a",
+                    "title": "Task A",
+                    "task_type": "general",
+                    "spec_hints": {"code_patterns": [123]},
+                }
+            ]
+        },
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "spec_hints.code_patterns" in result.stderr
+    assert "must be a string" in result.stderr
+
+
+def test_init_sprint_plan_rejects_carriage_return_spec_hint_item(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {
+            "tasks": [
+                {
+                    "slug": "task-a",
+                    "title": "Task A",
+                    "task_type": "general",
+                    "scope": ["Safe text\r## Injected"],
+                }
+            ]
+        },
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "single line" in result.stderr
 
 
 def test_init_sprint_writes_decree_checkpoint(tmp_path: Path) -> None:

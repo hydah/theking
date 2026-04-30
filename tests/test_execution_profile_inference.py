@@ -22,10 +22,12 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from constants import WorkflowError  # noqa: E402
 from validation import (  # noqa: E402
+    infer_default_review_mode,
     infer_execution_profile,
     normalize_task_type,
     task_requires_security_review,
     validate_task_contract,
+    validate_task_metadata,
 )
 
 # --- infer_execution_profile: new default for plain `backend` ---
@@ -119,3 +121,85 @@ def test_backend_http_server_task_still_requires_security_review() -> None:
     assert task_requires_security_review("backend", "backend.http") is True
     assert task_requires_security_review("api", "backend.http") is True
     assert task_requires_security_review("service", "backend.http") is True
+
+
+def test_validate_task_metadata_defaults_missing_review_mode_to_light() -> None:
+    task_data = {
+        "id": "TASK-001-demo",
+        "title": "Demo",
+        "status": "draft",
+        "status_history": ["draft"],
+        "task_type": "general",
+        "execution_profile": "backend.cli",
+        "verification_profile": ["backend.cli"],
+        "requires_security_review": False,
+        "required_agents": ["planner", "tdd-guide", "code-reviewer"],
+        "depends_on": [],
+        "current_review_round": 0,
+    }
+
+    validated = validate_task_metadata(task_data)
+
+    assert validated["review_mode"] == "light"
+
+
+def test_validate_task_metadata_defaults_missing_security_review_mode_to_full() -> None:
+    task_data = {
+        "id": "TASK-001-auth-demo",
+        "title": "Auth Demo",
+        "status": "draft",
+        "status_history": ["draft"],
+        "task_type": "auth",
+        "execution_profile": "backend.http",
+        "verification_profile": ["backend.http"],
+        "requires_security_review": True,
+        "required_agents": ["planner", "tdd-guide", "code-reviewer", "security-reviewer"],
+        "depends_on": [],
+        "current_review_round": 0,
+    }
+
+    validated = validate_task_metadata(task_data)
+
+    assert validated["review_mode"] == "full"
+
+
+def test_validate_task_metadata_rejects_security_review_mode_downgrade() -> None:
+    task_data = {
+        "id": "TASK-001-auth-demo",
+        "title": "Auth Demo",
+        "status": "draft",
+        "status_history": ["draft"],
+        "task_type": "auth",
+        "execution_profile": "backend.http",
+        "verification_profile": ["backend.http"],
+        "requires_security_review": True,
+        "required_agents": ["planner", "tdd-guide", "code-reviewer", "security-reviewer"],
+        "depends_on": [],
+        "current_review_round": 0,
+        "review_mode": "light",
+    }
+
+    with pytest.raises(WorkflowError) as exc:
+        validate_task_metadata(task_data)
+
+    assert "review_mode" in str(exc.value)
+    assert "full" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("task_type", "execution_profile", "expected"),
+    [
+        ("general", "backend.cli", "light"),
+        ("auth", "backend.http", "full"),
+        ("api", "backend.http", "full"),
+        ("input", "backend.http", "full"),
+        ("e2e", "web.browser", "full"),
+        ("e2e,job", "backend.job", "full"),
+    ],
+)
+def test_infer_default_review_mode(
+    task_type: str,
+    execution_profile: str,
+    expected: str,
+) -> None:
+    assert infer_default_review_mode(task_type, execution_profile) == expected

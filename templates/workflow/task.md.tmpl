@@ -14,6 +14,7 @@ required_agents:
 depends_on:
 {depends_on_block}
 {bundle_block}current_review_round: 0
+review_mode: {review_mode}
 ---
 
 ## Goal
@@ -31,4 +32,9 @@ depends_on:
      single-deliverable tasks. Default is `flow: full` (Test Plan >= 5,
      Edge Cases >= 3). The setting is preserved across status transitions.
      See `.theking/agents/planner.md` for when to use lightweight flow. -->
+
+<!-- Optional: change `review_mode` to `full` for tasks that touch auth,
+     input, API, backend.http, or introduce new abstractions. Default is
+     `light` (quick sanity scan, CRITICAL/HIGH findings only). The sprint-
+     level review in Phase 5 is the deep quality gate. -->
 

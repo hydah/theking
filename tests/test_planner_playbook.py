@@ -11,6 +11,8 @@ the compatibility matrix, CI fails before the regression reaches users.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -22,6 +24,7 @@ WORKFLOW_SKILL_TMPL = (
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from constants import ALLOWED_TASK_TYPE_TOKENS  # noqa: E402
+from sprint_plan import parse_bundles, parse_plan_entries  # noqa: E402
 
 
 def read_planner() -> str:
@@ -51,6 +54,19 @@ def test_planner_template_includes_compatibility_matrix() -> None:
     # Matrix must mention each of the four execution_profiles by name.
     for profile in ("web.browser", "backend.http", "backend.cli", "backend.job"):
         assert profile in text, f"compatibility matrix missing profile: {profile}"
+
+
+def test_planner_compatibility_matrix_has_consistent_column_count() -> None:
+    text = read_planner()
+    matrix = re.search(
+        r"\| task_type ↓ / execution_profile → \|.*?(?=\n\nRules of thumb)",
+        text,
+        flags=re.DOTALL,
+    )
+    assert matrix is not None, "compatibility matrix not found"
+    rows = [line for line in matrix.group(0).splitlines() if line.startswith("|")]
+    counts = [len(line.strip().strip("|").split("|")) for line in rows]
+    assert len(set(counts)) == 1, f"matrix column counts drifted: {counts}"
 
 
 def test_planner_template_includes_security_review_rule() -> None:
@@ -97,3 +113,42 @@ def test_workflow_skill_clarifies_resolved_no_new_changes_path() -> None:
         "workflow-governance skill must warn against opening an empty round 2; "
         "resolved-with-no-code-changes should advance directly to ready_to_merge"
     )
+
+
+def test_planner_plan_json_example_is_valid_json() -> None:
+    text = read_planner()
+    match = re.search(r"```json\n(.*?)\n```", text, flags=re.DOTALL)
+    assert match is not None, "planner JSON example not found"
+    example = match.group(1).replace("{{", "{").replace("}}", "}")
+    assert re.search(r"^\s*\.\.\.\s*$", example, flags=re.MULTILINE) is None
+
+    plan = json.loads(example)
+
+    assert isinstance(plan["tasks"], list)
+    for task in plan["tasks"]:
+        for field in (
+            "slug",
+            "title",
+            "task_type",
+            "execution_profile",
+            "depends_on",
+            "review_mode",
+            "scope",
+            "non_goals",
+            "acceptance",
+            "edge_cases",
+        ):
+            assert field in task
+
+
+def test_planner_plan_json_example_matches_plan_parser(tmp_path: Path) -> None:
+    text = read_planner()
+    match = re.search(r"```json\n(.*?)\n```", text, flags=re.DOTALL)
+    assert match is not None, "planner JSON example not found"
+    example = match.group(1).replace("{{", "{").replace("}}", "}")
+    plan = json.loads(example)
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+
+    parsed = parse_plan_entries(plan["tasks"], tasks_dir)
+    parse_bundles(plan["bundles"], parsed["slug_to_id"], parsed["deps_by_slug"])

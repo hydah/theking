@@ -177,3 +177,16 @@ KIMI_SUBAGENT_ROLES: tuple[str, ...] = (
     "refactor-cleaner",
     "perf-optimizer",
 )
+
+# --- Review mode ---------------------------------------------------------
+# Controls review depth per task. Structural contract (review pair required)
+# is unchanged; the mode only affects reviewer behavior guidance.
+#
+# light: Quick sanity scan — code-reviewer focuses on CRITICAL/HIGH only.
+#        Default for tasks that are single-file, follow established patterns,
+#        and don't touch auth/input/API surfaces.
+# full:  Comprehensive review — full scrutiny including architecture,
+#        consistency, and edge-case coverage. Required for security surfaces,
+#        cross-module changes, and new abstractions.
+ALLOWED_REVIEW_MODES: frozenset[str] = frozenset({"light", "full"})
+DEFAULT_REVIEW_MODE = "light"

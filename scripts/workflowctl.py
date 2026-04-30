@@ -35,12 +35,10 @@ try:
     from .sprint_plan import (
         parse_bundles,
         parse_plan_entries,
-        read_sprint_frontmatter,
         reject_sealed_sprint_for_writes,
         render_sprint_md,
         require_string,
         split_sprint_md,
-        sprint_is_sealed,
         update_sprint_overview,
         utc_iso8601_z,
         write_task_files,
@@ -59,6 +57,7 @@ try:
         get_workflow_project_dir,
         humanize_slug,
         infer_blocked_resume_status,
+        infer_default_review_mode,
         infer_execution_profile,
         infer_required_agents,
         infer_verification_profile,
@@ -69,6 +68,7 @@ try:
         normalize_task_type,
         normalize_title,
         render_template,
+        resolve_review_mode,
         review_type_specs_for_task,
         slugify,
         stringify,
@@ -108,12 +108,10 @@ except ImportError:
     from sprint_plan import (
         parse_bundles,
         parse_plan_entries,
-        read_sprint_frontmatter,
         reject_sealed_sprint_for_writes,
         render_sprint_md,
         require_string,
         split_sprint_md,
-        sprint_is_sealed,
         update_sprint_overview,
         utc_iso8601_z,
         write_task_files,
@@ -132,6 +130,7 @@ except ImportError:
         get_workflow_project_dir,
         humanize_slug,
         infer_blocked_resume_status,
+        infer_default_review_mode,
         infer_execution_profile,
         infer_required_agents,
         infer_verification_profile,
@@ -142,6 +141,7 @@ except ImportError:
         normalize_task_type,
         normalize_title,
         render_template,
+        resolve_review_mode,
         review_type_specs_for_task,
         slugify,
         stringify,
@@ -662,6 +662,7 @@ def handle_init_task(args: argparse.Namespace) -> None:
 
     requires_security_review = task_requires_security_review(task_type, execution_profile)
     required_agents = infer_required_agents(task_type, execution_profile)
+    review_mode = infer_default_review_mode(task_type, execution_profile)
 
     write_task_files(
         task_dir,
@@ -673,6 +674,7 @@ def handle_init_task(args: argparse.Namespace) -> None:
         requires_security_review=requires_security_review,
         required_agents=required_agents,
         depends_on=[],
+        review_mode=review_mode,
     )
     print(task_dir)
 
@@ -863,6 +865,11 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 else infer_execution_profile(task_type)
             )
             validate_task_contract(task_type, execution_profile)
+            review_mode = (
+                resolve_review_mode(entry["review_mode"], task_type, execution_profile)
+                if "review_mode" in entry
+                else infer_default_review_mode(task_type, execution_profile)
+            )
         except WorkflowError as error:
             plan_errors.append(f"[{slug}] {error}")
             continue
@@ -883,6 +890,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 "required_agents": required_agents,
                 "depends_on": resolved_deps,
                 "spec_hints": entry.get("_spec_hints", {}),
+                "review_mode": review_mode,
             }
         )
 
@@ -918,7 +926,8 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 required_agents=entry["required_agents"],
                 depends_on=entry["depends_on"],
                 spec_hints=entry.get("spec_hints") or None,
-                bundle=bundle_map.get(entry.get("_slug")) if bundle_map else None,
+                bundle=bundle_map.get(entry["_slug"]) if bundle_map else None,
+                review_mode=entry.get("review_mode", "light"),
             )
 
         update_sprint_overview(sprint_dir / "sprint.md")

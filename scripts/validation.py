@@ -12,9 +12,11 @@ from typing import Any
 try:
     from .constants import (
         ALLOWED_EXECUTION_PROFILES,
+        ALLOWED_REVIEW_MODES,
         ALLOWED_STATUSES,
         ALLOWED_TASK_TYPE_TOKENS,
         ALLOWED_TRANSITIONS,
+        DEFAULT_REVIEW_MODE,
         EXECUTION_PROFILE_ALIASES,
         EXECUTION_PROFILE_DIRS,
         MAX_BUNDLE_SIZE,
@@ -26,9 +28,11 @@ try:
 except ImportError:
     from constants import (
         ALLOWED_EXECUTION_PROFILES,
+        ALLOWED_REVIEW_MODES,
         ALLOWED_STATUSES,
         ALLOWED_TASK_TYPE_TOKENS,
         ALLOWED_TRANSITIONS,
+        DEFAULT_REVIEW_MODE,
         EXECUTION_PROFILE_ALIASES,
         EXECUTION_PROFILE_DIRS,
         MAX_BUNDLE_SIZE,
@@ -261,12 +265,18 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
                 f"bundle must be a valid slug (got {bundle_str!r}); "
                 "use lowercase alphanumeric with hyphens"
             )
+    review_mode = resolve_review_mode(
+        task_data.get("review_mode"),
+        task_type,
+        execution_profile,
+    )
 
     return {
         **task_data,
         "id": task_id,
         "task_type": task_type,
         "execution_profile": execution_profile,
+        "review_mode": review_mode,
     }
 
 
@@ -367,6 +377,7 @@ def validate_spec(
     effective_flow = normalize_task_flow(flow) if flow else "full"
 
     # mechanical flow: only Scope + Acceptance required; others optional
+    required_sections: tuple[str, ...]
     if effective_flow == "mechanical":
         required_sections = ("Scope", "Acceptance")
     else:
@@ -1237,6 +1248,47 @@ def task_requires_security_review(task_type: str, execution_profile: str) -> boo
     return execution_profile == "backend.http" or bool(tokens & {"auth", "input", "api"})
 
 
+def normalize_review_mode(value: Any) -> str:
+    """Normalize the task.md 'review_mode' frontmatter field. Missing -> DEFAULT_REVIEW_MODE."""
+    if value is None:
+        return DEFAULT_REVIEW_MODE
+    text = stringify(value).strip().lower()
+    if text == "":
+        return DEFAULT_REVIEW_MODE
+    if text not in ALLOWED_REVIEW_MODES:
+        raise WorkflowError(
+            f"Unknown review_mode: {text!r}. Allowed values: {sorted(ALLOWED_REVIEW_MODES)}"
+        )
+    return text
+
+
+def infer_default_review_mode(task_type: str, execution_profile: str) -> str:
+    """Infer a sensible default review_mode from task_type and execution_profile.
+
+    Tasks touching security surfaces or cross-module concerns should default
+    to 'full'; everything else defaults to 'light'.
+    """
+    if execution_profile == "backend.http":
+        return "full"
+    tokens = set(task_type.split(","))
+    if tokens & {"auth", "input", "api", "e2e"}:
+        return "full"
+    return "light"
+
+
+def resolve_review_mode(value: Any, task_type: str, execution_profile: str) -> str:
+    """Resolve review_mode with task-contract-aware defaults and safeguards."""
+    inferred = infer_default_review_mode(task_type, execution_profile)
+    if value is None or stringify(value).strip() == "":
+        return inferred
+    review_mode = normalize_review_mode(value)
+    if inferred == "full" and review_mode != "full":
+        raise WorkflowError(
+            "review_mode must be 'full' for auth/input/api/backend.http/e2e tasks"
+        )
+    return review_mode
+
+
 def validate_task_contract(task_type: str, execution_profile: str) -> None:
     tokens = set(task_type.split(","))
     browser_tokens = {"frontend", "e2e", "ui", "web", "auth"}
@@ -1332,6 +1384,10 @@ def serialize_task_frontmatter(task_data: dict[str, Any]) -> str:
     if task_data.get("flow") is not None:
         flow_value = normalize_task_flow(task_data["flow"])
         lines.append(f"flow: {flow_value}")
+    # Preserve optional `review_mode` field if present.
+    if task_data.get("review_mode") is not None:
+        review_value = normalize_review_mode(task_data["review_mode"])
+        lines.append(f"review_mode: {review_value}")
     # Preserve optional `bundle` field if present (I-012 task bundle).
     if task_data.get("bundle") is not None:
         bundle_str = stringify(task_data["bundle"]).strip()

@@ -168,31 +168,52 @@ def require_string(value: Any, label: str) -> str:
 def extract_spec_hints(entry: dict[str, Any], task_id: str) -> dict[str, list[str]]:
     """Extract optional spec seed fields from a plan entry.
 
-    Recognised keys: scope, non_goals, acceptance, edge_cases. Each must be a list of
-    strings. Returns an empty dict if no hints are supplied.
+    Recognised top-level keys: scope, non_goals, acceptance, edge_cases.
+    Recognised nested spec_hints keys: code_patterns, test_helpers, related_tasks.
+    Each must be a list of strings. Returns an empty dict if no hints are supplied.
     """
 
-    hints: dict[str, list[str]] = {}
-    for key in ("scope", "non_goals", "acceptance", "edge_cases"):
-        if key not in entry:
-            continue
-        raw = entry[key]
+    def extract_list(raw: Any, key: str) -> list[str]:
         if not isinstance(raw, list):
             raise WorkflowError(
                 f"Task {task_id} field '{key}' must be a list of strings when provided"
             )
         items: list[str] = []
         for index, item in enumerate(raw):
-            text = stringify(item).strip()
+            if not isinstance(item, str):
+                raise WorkflowError(
+                    f"Task {task_id} field '{key}' item {index} must be a string"
+                )
+            text = item.strip()
             if not text:
                 continue
-            if "\n" in text:
+            if "\n" in text or "\r" in text:
                 raise WorkflowError(
                     f"Task {task_id} field '{key}' item {index} must be a single line"
                 )
             items.append(text)
+        return items
+
+    hints: dict[str, list[str]] = {}
+    for key in ("scope", "non_goals", "acceptance", "edge_cases"):
+        if key not in entry:
+            continue
+        items = extract_list(entry[key], key)
         if items:
             hints[key] = items
+
+    if "spec_hints" in entry:
+        nested = entry["spec_hints"]
+        if not isinstance(nested, dict):
+            raise WorkflowError(
+                f"Task {task_id} field 'spec_hints' must be an object when provided"
+            )
+        for key in ("code_patterns", "test_helpers", "related_tasks"):
+            if key not in nested:
+                continue
+            items = extract_list(nested[key], f"spec_hints.{key}")
+            if items:
+                hints[key] = items
     return hints
 
 
@@ -395,6 +416,7 @@ def write_task_files(
     depends_on: list[str],
     spec_hints: dict[str, list[str]] | None = None,
     bundle: str | None = None,
+    review_mode: str = "light",
 ) -> None:
     """Write task.md and spec.md into a task directory."""
     depends_on_block = (
@@ -416,6 +438,7 @@ def write_task_files(
             required_agents_block="\n".join(f"  - {a}" for a in required_agents),
             depends_on_block=depends_on_block,
             bundle_block=bundle_block,
+            review_mode=review_mode,
         ),
         encoding="utf-8",
     )
@@ -483,6 +506,22 @@ def render_spec_markdown(
             rendered.append(subbullet_ep)
         return "\n".join(rendered)
 
+    def implementation_hints() -> str:
+        sections: list[str] = []
+        labels = {
+            "code_patterns": "Code Patterns",
+            "test_helpers": "Test Helpers",
+            "related_tasks": "Related Tasks",
+        }
+        for key, label in labels.items():
+            items = [item.strip() for item in hints.get(key, []) if str(item).strip()]
+            if not items:
+                continue
+            sections.append(f"### {label}\n" + "\n".join(f"- {item}" for item in items))
+        if not sections:
+            return ""
+        return "\n\n## Implementation Hints\n" + "\n\n".join(sections) + "\n"
+
     return (
         f"# {title} Spec\n\n"
         "<!-- All sections below are required, even for lightweight tasks.\n"
@@ -497,6 +536,7 @@ def render_spec_markdown(
         f"{test_plan}\n\n"
         "## Edge Cases\n"
         f"{bullets('edge_cases', 'List boundary conditions, error scenarios, and unusual inputs to handle.')}\n"
+        f"{implementation_hints()}"
     )
 
 

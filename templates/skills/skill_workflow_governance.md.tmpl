@@ -264,6 +264,27 @@ stateDiagram-v2
 {theking_cmd} ensure --project-dir {workflow_root_quoted} --project-slug {project_slug}
 ```
 
+#### 🔗 Plan→Task 知识传递（必做，不可省略）
+
+Phase 1 的初勘结论是 planner 的输入，不是装饰。召 planner 前，主 agent 必须把初勘结构化摘要**直接嵌入 planner prompt 或 decree 上下文**：
+
+```
+👑 [decree] 同步给 planner 的初勘：
+- 影响文件：<文件路径 × N，含 file:line 锚点>
+- 重复模式：<定位到行号的重复代码>
+- 调用链：<关键调用关系>
+- 边界条件：<初勘时发现的 edge cases>
+- 风险标签：<auth/input/api/web.browser/...>
+```
+
+planner 基于此输出 plan.json。每个 task 条目**必须**包含 spec 种子字段（`scope`/`non_goals`/`acceptance`/`edge_cases`），这些字段由 `init-sprint-plan` 直接注入 spec.md，确保实现者打开 task 时不是空壳。
+
+planner 还必须为每个 task 指定 `review_mode: light|full`：
+- `light`（默认）：单文件/单包、遵循既有模式、不涉及安全面。Code-reviewer 快速扫描 CRITICAL/HIGH 即可。
+- `full`：跨模块、新抽象、或涉及 auth/input/api/backend.http。需完整审查。
+
+planner 应为紧耦合 task 声明 `bundle`（见下文 Task Bundles）。
+
 #### 完整流程
 
 1. 召 **中书令**（planner）起草方略，拆解需求为 task 列表
@@ -293,7 +314,7 @@ stateDiagram-v2
 
 **plan.json 路径规约**：plan.json 是 sprint 级资产，应放在 `.theking/workflows/{project_slug}/sprints/<sprint>/plan.json`，随 sprint 一同归档。**不要**放在项目根（会污染 git 或被误提交为顶层脏数据）。`init-sprint-plan` 接受任意路径，但放 sprint 目录是最佳实践。
 
-可选：在 `plan.json` 的每个 task 条目里提供 `scope` / `non_goals` / `acceptance` / `edge_cases` 字符串数组，`init-sprint-plan` 会把它们种子进 spec.md，免得 AI 建完 task 后忘了撰 spec。
+**必须**：planner 在 `plan.json` 的每个 task 条目里提供 `scope` / `non_goals` / `acceptance` / `edge_cases` 字符串数组和 `review_mode` 字符串，`init-sprint-plan` 会把它们种子进 spec.md 和 task.md。planner 不提供这些字段 = 失职。如果 planner 没有 Phase 1 初勘作为输入，这些字段注定是空洞的——必须先补初勘再召 planner。CLI 对历史/手写 plan 保持后向兼容：缺少种子字段时仍会生成占位 spec，缺少 `review_mode` 时按 task contract 推断默认值。
 
 **写 plan.json 前先读 `.theking/agents/planner.md`**：那里有 task_type 决策树与兼容矩阵，能帮你一次把 `task_type` / `execution_profile` 选对，避免 `init-sprint-plan` 反复拒执。
 
@@ -436,7 +457,9 @@ Bundle 准入规则（`init-sprint-plan` 校验）：
 ```bash
 {theking_cmd} init-review-round --task-dir <TASK_DIR>
 ```
-- 召 **御史大夫**（code-reviewer）— 必须
+- 召 **御史大夫**（code-reviewer）— 必须。检查 task.md 的 `review_mode` 字段（`light` 或 `full`）：
+  - `light`（默认）：快速扫描，只报告 CRITICAL/HIGH findings。无 CRITICAL/HIGH → 直接 resolved。
+  - `full`：完整审查（架构一致性、测试覆盖、边界条件）。用于 auth/input/api/backend.http 或跨模块 task。
 - 召 **刑部尚书**（security-reviewer）— auth/input/api 或 backend.http 时
 - 召 **兵部尚书**（e2e-runner）— web.browser 时
 - **有 CRITICAL/HIGH findings → 走【驳回重议分支】，不要在当前轮次里直接改代码后标 resolved**
@@ -536,7 +559,24 @@ TASK-003: ready_to_merge → done
 profile 在 `sprint-dir/verification/<profile>/` 下都有实质性证据，
 缺证据无法 seal。
 
-#### 2. 🧪 演武 · Sprint 级全量回归验证（必做，不可省）
+#### 2. 🔍 集议 · Sprint Review Round（必做，不可省）
+
+**这是真正的质量闸门。** Task 级的 review（Phase 4 步骤 7）是快速门禁——拦住明显错误。Sprint 级 review 是深度门禁——确保整体质量。
+
+1. **全量 diff review**：召 **御史大夫**（code-reviewer），审查整个 sprint 的 diff（所有 task 的合并变更）。重点：
+   - 跨 task 的一致性（两个 task 是否对同一概念用了不同命名？）
+   - 接口契约（task A 定义的接口是否被 task B 正确使用？）
+   - 架构合理性（所有 task 合在一起后的整体设计是否自洽？）
+   - 死代码（某个 task 的早期实现是否被后续 task 覆盖后残留？）
+2. **Sprint Integration Test**：如果 sprint 涉及 `backend.http` 或 `web.browser`，必须跑一次跨 task 的集成测试。不是每个 task 单独的 smoke，而是端到端的真实链路。
+3. 审查结论写入 `sprint-dir/verification/sprint-review.md`。
+
+> **三层 review 模型**：
+> - Task 级（`light`）：快速 sanity check，拦住 CRITICAL/HIGH
+> - Task 级（`full`）：对安全面/跨模块 task 的标准审查
+> - Sprint 级（本步骤）：全量深度审查 + 集成验证，是真正的质量闸
+
+#### 3. 🧪 演武 · Sprint 级全量回归验证（必做，不可省）
 
 多 task 合并后须再整体演武一次：
 
@@ -547,7 +587,7 @@ profile 在 `sprint-dir/verification/<profile>/` 下都有实质性证据，
 
 全量回归的命令与结果证据写入 `sprint-dir/verification/regression.md`。
 
-#### 3. 🎏 大阅 · Sprint 级画像验证（按需，依 sprint 涉及画像触发）
+#### 4. 🎏 大阅 · Sprint 级画像验证（按需，依 sprint 涉及画像触发）
 
 - sprint 涉及 `web.browser` → 召 **兵部尚书**（e2e-runner）跑一次**跨 task 的端到端场景**（不只是单 task smoke）
 - sprint 涉及 `backend.http` → 跑一次关键集成链路（多服务协同、真实依赖）；必须有**至少一个 endpoint 的完整 request-response 证据**（L1 连接级），改核心逻辑的 task 需 L2 业务级证据
@@ -557,25 +597,25 @@ profile 在 `sprint-dir/verification/<profile>/` 下都有实质性证据，
 证据也会被 `sprint-smoke` 核验（硬规则 #9）——实跑 + 落盘 = 一次动作两个用途。
 - 证据写入 `sprint-dir/verification/<profile>/`
 
-#### 4. 🧹 裁汰 · 代码清理（完整流程必做，轻量流程按需）
+#### 5. 🧹 裁汰 · 代码清理（完整流程必做，轻量流程按需）
 
 召 **吏部尚书**（refactor-cleaner）裁汰冗余代码。**注意：refactor-cleaner 会修改源代码，必走完整验证闭环，不得跳过 review。**
 
 ```
 a. refactor-cleaner 产出删除/重构清单（dead code、重复、过时抽象）
 b. 应用改动
-c. 再次执行步骤 2（完整 build + test），确认无误删被动态引用之代码
+c. 再次执行步骤 3（完整 build + test），确认无误删被动态引用之代码
 d. 召 code-reviewer 审查清单，重点：反射 / 动态 import / 配置字符串引用 / 外部 API 兼容
 e. 有 CRITICAL/HIGH → 回滚或补修；全绿 → 以独立 commit 落盘
 ```
 
 **⛔ 禁止**：把 refactor-cleaner 的改动直接 commit，不跑 build+test+review。
 
-#### 5. 📖 编典 · 知识提炼
+#### 6. 📖 编典 · 知识提炼
 
 将有复用价值的分析产物提炼到 `.theking/context/`（架构决策、踩坑记录、可复用模式）。
 
-#### 6. 📜 修史 · 文档更新（完整流程必做，轻量流程按需）
+#### 7. 📜 修史 · 文档更新（完整流程必做，轻量流程按需）
 
 召 **礼部尚书**（doc-updater）更新 README / ARCHITECTURE / CHANGELOG / CLAUDE.md 等。
 
@@ -588,7 +628,7 @@ b. 召 code-reviewer 做【文档专项轻审】，重点：
 c. 不一致 → 回炉重写；一致 → commit
 ```
 
-#### 7. 🔒 封印 · 停用 + Seal
+#### 8. 🔒 封印 · 停用 + Seal
 
 ```bash
 {theking_cmd} deactivate --project-dir {project_dir_quoted}
@@ -604,7 +644,7 @@ sprint 即为 immutable 审计单元**：`init-task --sprint <sealed>` 与
 可省略：早期 sprint（sprint-001 / sprint-002 之前）的历史 sprint.md 没有
 frontmatter，仍可正常读写——不强制回填。
 
-#### 8. 📯 奏捷 · 汇报旨意执行结果
+#### 9. 📯 奏捷 · 汇报旨意执行结果
 
 总结本次交付：完成的 task 列表、全量回归结果、知识沉淀指针、遗留 blocked 项。
 

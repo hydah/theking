@@ -232,6 +232,43 @@ def test_sprint_check_detects_cycle(tmp_path: Path) -> None:
     assert "circular" in result.stderr.lower() or "cycle" in result.stderr.lower()
 
 
+def test_check_rejects_invalid_review_mode(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_dir = sprint_dir / "tasks" / "TASK-001-task-a"
+    task_md = task_dir / "task.md"
+    task_md.write_text(
+        task_md.read_text(encoding="utf-8").replace(
+            "review_mode: light",
+            "review_mode: turbo",
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0
+    assert "review_mode" in result.stderr
+    assert "turbo" in result.stderr
+
+
+def test_sprint_check_rejects_invalid_review_mode(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    task_md = sprint_dir / "tasks" / "TASK-001-task-a" / "task.md"
+    task_md.write_text(
+        task_md.read_text(encoding="utf-8").replace(
+            "review_mode: light",
+            "review_mode: turbo",
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli(["sprint-check", "--sprint-dir", str(sprint_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0
+    assert "review_mode" in result.stderr
+    assert "turbo" in result.stderr
+
+
 def test_sprint_check_fails_when_task_spec_is_missing(tmp_path: Path) -> None:
     sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
     spec_path = sprint_dir / "tasks" / "TASK-001-task-a" / "spec.md"
@@ -834,6 +871,7 @@ def test_init_review_round_from_green_scaffolds_security_review_when_required(tm
     content = content.replace("  - backend.cli", "  - backend.http")
     content = content.replace("requires_security_review: false", "requires_security_review: true")
     content = content.replace("  - code-reviewer", "  - code-reviewer\n  - security-reviewer")
+    content = content.replace("review_mode: light", "review_mode: full")
     task_md.write_text(content, encoding="utf-8")
     (task_dir / "verification" / "http").mkdir(parents=True, exist_ok=True)
     set_task_status(
