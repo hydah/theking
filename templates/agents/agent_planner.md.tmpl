@@ -159,7 +159,9 @@ rubber-stamp security-review round that adds no signal.
 
 ## Output Format
 
-When asked to plan a sprint, output a JSON block (NOT YAML — `init-sprint-plan` reads JSON) that can be saved as `plan.json`. Every task MUST include the 🔑 spec seed fields:
+When asked to plan a sprint, output a JSON block (NOT YAML — `init-sprint-plan` reads JSON) that can be saved as `plan.json`. Every task MUST include the 🔑 spec seed fields.
+
+Also output a short Markdown companion note outside the JSON block titled `初勘响应`, explaining how each key Phase 1 finding was handled. Do not put Markdown headings, comments, or prose inside `plan.json`; encode accepted findings into task fields such as `scope`, `non_goals`, `edge_cases`, and `spec_hints`.
 
 ```json
 {{

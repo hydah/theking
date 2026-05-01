@@ -13,26 +13,43 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLANNER_TMPL = REPO_ROOT / "templates" / "agents" / "agent_planner.md.tmpl"
+PLANNER_PROJECTIONS = (
+    PLANNER_TMPL,
+    REPO_ROOT / ".theking" / "agents" / "planner.md",
+    REPO_ROOT / ".claude" / "agents" / "planner.md",
+    REPO_ROOT / ".codebuddy" / "agents" / "planner.md",
+)
 WORKFLOW_SKILL_TMPL = (
     REPO_ROOT / "templates" / "skills" / "skill_workflow_governance.md.tmpl"
 )
+WORKFLOW_SKILL_PROJECTIONS = (
+    WORKFLOW_SKILL_TMPL,
+    REPO_ROOT / ".theking" / "skills" / "workflow-governance" / "SKILL.md",
+    REPO_ROOT / ".github" / "skills" / "workflow-governance" / "SKILL.md",
+)
 
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from constants import ALLOWED_TASK_TYPE_TOKENS  # noqa: E402
-from sprint_plan import parse_bundles, parse_plan_entries  # noqa: E402
+from scripts.constants import ALLOWED_TASK_TYPE_TOKENS
+from scripts.sprint_plan import parse_bundles, parse_plan_entries
 
 
 def read_planner() -> str:
     return PLANNER_TMPL.read_text(encoding="utf-8")
 
 
+def read_planner_projections() -> list[tuple[Path, str]]:
+    return [(path, path.read_text(encoding="utf-8")) for path in PLANNER_PROJECTIONS]
+
+
 def read_workflow_skill() -> str:
     return WORKFLOW_SKILL_TMPL.read_text(encoding="utf-8")
+
+
+def read_workflow_skill_projections() -> list[tuple[Path, str]]:
+    return [(path, path.read_text(encoding="utf-8")) for path in WORKFLOW_SKILL_PROJECTIONS]
 
 
 # --- planner playbook: three tables ---
@@ -87,6 +104,13 @@ def test_planner_template_covers_every_allowed_task_type_token() -> None:
     )
 
 
+def test_planner_projections_keep_plan_json_json_only() -> None:
+    for path, text in read_planner_projections():
+        assert "初勘响应" in text, path
+        assert "outside the JSON block" in text, path
+        assert "Do not put Markdown headings" in text, path
+
+
 # --- workflow-governance skill: plan.json convention + review loop hint ---
 
 
@@ -97,6 +121,20 @@ def test_workflow_skill_documents_plan_json_sprint_local_path() -> None:
     assert (
         "sprints/" in text and "plan.json" in text
     ), "workflow-governance skill must document that plan.json lives under the sprint directory"
+
+
+def test_workflow_skill_keeps_plan_json_json_only() -> None:
+    for path, text in read_workflow_skill_projections():
+        assert "plan.json 的 `##" not in text, path
+        assert "Markdown" in text, path
+        assert "伴随说明" in text, path
+
+
+def test_workflow_skill_does_not_reintroduce_process_skip_exceptions() -> None:
+    for path, text in read_workflow_skill_projections():
+        assert "不需要 sprint / spec / review" not in text, path
+        assert "可以跳过 theking 工作流" not in text, path
+        assert "流程外快速处理" in text, path
 
 
 def test_workflow_skill_clarifies_resolved_no_new_changes_path() -> None:
