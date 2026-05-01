@@ -245,3 +245,84 @@ def test_verify_error_is_atomic(tmp_path: Path) -> None:
 
     # Also: the unrelated "nope" profile dir must not have been created.
     assert not (task_dir / "verification" / "made-up-profile").exists()
+
+
+# ---------------------------------------------------------------------------
+# Round-001 finding-001: timeout writes status=command_failed (not command_timeout)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_timeout_writes_command_failed_status(tmp_path: Path) -> None:
+    """Per spec §Scope, the ledger `status` field is `{command_ok,
+    command_failed}`. A timeout must fold into `command_failed`; timeout
+    signal survives via exit=124 in `notes` and the '[workflowctl verify]
+    command exceeded --timeout Ns' trailer in evidence.md."""
+    task_dir = bootstrap_task(tmp_path)
+    result = run_cli(
+        [
+            "verify",
+            "--task-dir", str(task_dir),
+            "--profile", "backend.cli",
+            "--command", "sleep 5",
+            "--evidence-section", "slow-step",
+            "--timeout", "1",
+        ],
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, f"verify must exit 0 even on timeout: {result.stderr!r}"
+
+    summary = json.loads(result.stdout.strip().splitlines()[-1])
+    assert summary["status"] == "command_failed", (
+        f"Summary status on timeout must be command_failed, got: {summary}"
+    )
+    assert summary["exit"] == 124, summary
+
+    ledger = task_dir / "agent-runs.jsonl"
+    last = ledger.read_text(encoding="utf-8").strip().splitlines()[-1]
+    payload = json.loads(last)
+    assert payload["status"] == "command_failed", (
+        f"Ledger status on timeout must match spec enum (command_failed); "
+        f"got {payload['status']!r}"
+    )
+    assert "exit=124" in payload["notes"]
+
+    evidence = (task_dir / "verification" / "cli" / "evidence.md").read_text(encoding="utf-8")
+    assert "exit: 124" in evidence
+    assert "exceeded --timeout" in evidence or "timeout" in evidence.lower()
+
+
+def test_verify_appends_to_legacy_free_form_evidence(tmp_path: Path) -> None:
+    """Round-001 untested-paths observation: spec Edge Case §2 requires
+    appending at EOF without rewriting when the existing evidence.md has
+    free-form fenced blocks but no '## <section>' heading."""
+    task_dir = bootstrap_task(tmp_path)
+    evidence_dir = task_dir / "verification" / "cli"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    legacy = evidence_dir / "evidence.md"
+    legacy_text = (
+        "# Some legacy evidence\n\n"
+        "```shell\n"
+        "$ go test ./...\n"
+        "ok pkg/foo\n"
+        "```\n"
+    )
+    legacy.write_text(legacy_text, encoding="utf-8")
+
+    result = run_cli(
+        [
+            "verify",
+            "--task-dir", str(task_dir),
+            "--profile", "backend.cli",
+            "--command", "echo new",
+            "--evidence-section", "added-later",
+        ],
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+
+    text = legacy.read_text(encoding="utf-8")
+    # Legacy prelude preserved verbatim.
+    assert text.startswith(legacy_text), "Legacy content must be preserved verbatim at the start"
+    # New section appended.
+    assert "## added-later" in text
+    assert "$ echo new" in text

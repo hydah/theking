@@ -1656,7 +1656,7 @@ def handle_verify(args: argparse.Namespace) -> None:
     # --- Decide summary status ---
     if timed_out:
         summary_status = "command_failed"
-        ledger_status = "command_timeout"
+        ledger_status = "command_failed"
     elif command_exit != 0:
         summary_status = "command_failed"
         ledger_status = "command_failed"
