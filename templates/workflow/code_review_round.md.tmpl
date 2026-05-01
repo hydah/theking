@@ -5,4 +5,22 @@
 - Summary: describe what changed in this round.
 
 ## Findings
-- List bugs, regressions, and risks.
+
+<!-- Every finding MUST carry a stable id of the form `finding-NNN`.
+     The paired `.resolved.md` file must contain a matching `### finding-NNN`
+     subsection for each id below, with `- Status: resolved|waived`.
+     `workflowctl check` enforces this via validate_review_resolution_coverage.
+
+     If this round has no findings, delete the scaffold below and write:
+         - (no findings this round)
+     That legacy prose form is still accepted (coverage gate is a no-op when
+     no `### finding-` headers are present). -->
+
+### finding-001 · <severity> · <short title>
+- Location: <path/to/file.ext:line>
+- Severity: <blocker | major | minor | nit>
+- Finding: <what is wrong and why it matters>
+
+<!-- Add additional findings as ### finding-002, ### finding-003, ...
+     Ids do not need to be consecutive; the gate only checks that every id
+     declared here is closed in the paired resolved file. -->

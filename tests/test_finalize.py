@@ -178,7 +178,11 @@ def write_review_pair(task_dir: Path, round_number: int = 1) -> None:
     resolved_file = review_dir / f"code-review-round-{round_number:03d}.resolved.md"
     resolved_file.write_text(
         f"# Resolved Code Review Round {round_number:03d}\n\n"
-        "## Fixes\n- Nothing to fix\n\n"
+        "## Fixes\n\n"
+        "### finding-001\n"
+        "- Status: resolved\n"
+        "- Fix: Nothing actually needed — placeholder finding in scaffold.\n"
+        "- Evidence: pytest\n\n"
         "## Verification\n- pytest passed\n",
         encoding="utf-8",
     )

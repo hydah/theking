@@ -1028,6 +1028,140 @@ def ensure_review_pair(review_dir: Path, review_type: str, round_number: int) ->
 
     ensure_review_artifact(review_file, "review")
     ensure_review_artifact(resolved_file, "resolved review")
+    # Sprint-010 TASK-001: harden resolved coverage once the round is paired.
+    # Runs only when review + resolved both exist; legacy (no `### finding-`
+    # header) files skip the gate transparently.
+    validate_review_resolution_coverage(review_dir, review_type, round_number)
+
+
+_FINDING_ID_RE = r"(finding-\d+)(?:\s|·|$)"
+_FINDING_HEADER = re.compile(r"^###\s+" + _FINDING_ID_RE, re.MULTILINE)
+_RESOLVED_HEADER = re.compile(r"^###\s+" + _FINDING_ID_RE)
+
+
+def _parse_finding_ids_from_review(review_md: str) -> list[str]:
+    """Return the ordered unique list of `finding-NNN` ids declared in a
+    review round markdown. Deduplicates while preserving first-seen order.
+    """
+    seen: dict[str, None] = {}
+    for match in _FINDING_HEADER.finditer(review_md):
+        fid = match.group(1)
+        seen.setdefault(fid, None)
+    return list(seen.keys())
+
+
+def _parse_resolved_entries(resolved_md: str) -> dict[str, dict[str, str]]:
+    """Parse resolved markdown into a map of finding-id -> {status, waiver_reason}.
+
+    Each `### finding-NNN` subsection is walked until the next `###` or `##`
+    header; we collect `- Status:` and `- Waiver-Reason:` lines verbatim (value
+    stripped and lower-cased for Status to match the rest of the module's enum
+    normalization style). Missing Status leaves the key absent so the caller
+    can raise a precise error. The id header uses the same trailing guard as
+    the review-side parser (via shared _RESOLVED_HEADER) so inputs like
+    `### finding-001garbage` are ignored on both sides symmetrically.
+
+    Tie-breaks: first block wins for a repeated id (setdefault); within a
+    block, first `- Status:` / `- Waiver-Reason:` line wins (we assign only
+    when the key is still absent).
+    """
+    entries: dict[str, dict[str, str]] = {}
+    lines = resolved_md.splitlines()
+    index = 0
+    while index < len(lines):
+        header = _RESOLVED_HEADER.match(lines[index])
+        if not header:
+            index += 1
+            continue
+        fid = header.group(1)
+        block: dict[str, str] = {}
+        index += 1
+        while index < len(lines) and not lines[index].startswith("##"):
+            status_match = re.match(r"^-\s*Status\s*:\s*(.+?)\s*$", lines[index])
+            if status_match and "status" not in block:
+                # Lower-case to match normalize_* helpers elsewhere in this
+                # module; authors writing `Resolved` / `WAIVED` get a friendly
+                # match instead of a confusing rejection.
+                block["status"] = status_match.group(1).strip().lower()
+            waiver_match = re.match(r"^-\s*Waiver-Reason\s*:\s*(.+?)\s*$", lines[index])
+            if waiver_match and "waiver_reason" not in block:
+                block["waiver_reason"] = waiver_match.group(1).strip()
+            index += 1
+        entries.setdefault(fid, block)
+    return entries
+
+
+def validate_review_resolution_coverage(
+    review_dir: Path,
+    review_type: str,
+    round_number: int,
+) -> None:
+    """Gate: every `### finding-NNN` declared in the review round must be
+    closed in the paired .resolved.md with Status ∈ {resolved, waived}; a
+    waived finding must carry a non-empty `- Waiver-Reason:` line.
+
+    Backward compatibility: if the review round markdown declares zero
+    `### finding-` headers (legacy prose format), this function is a no-op —
+    the existing `validate_review_artifact_content` gate still fires for
+    section presence. This keeps sprints 001-009 green without forcing a
+    migration.
+    """
+    base_name = f"{review_type}-review-round-{round_number:03d}"
+    review_file = review_dir / f"{base_name}.md"
+    resolved_file = review_dir / f"{base_name}.resolved.md"
+
+    if not review_file.is_file() or not resolved_file.is_file():
+        # Existence is the prior gate's job. Coverage gate is additive.
+        return
+
+    review_md = review_file.read_text(encoding="utf-8")
+    resolved_md = resolved_file.read_text(encoding="utf-8")
+
+    declared = _parse_finding_ids_from_review(review_md)
+    if not declared:
+        # Legacy prose format — nothing to close. No-op.
+        return
+
+    entries = _parse_resolved_entries(resolved_md)
+
+    missing = [fid for fid in declared if fid not in entries]
+    if missing:
+        raise WorkflowError(
+            f"Resolved review {resolved_file.name} is missing finding id "
+            f"section(s): {', '.join(missing)}. Every `### finding-NNN` "
+            "declared in the review round must have a matching resolution "
+            "block with `- Status:` (resolved|waived)."
+        )
+
+    allowed_statuses = {"resolved", "waived"}
+    problems: list[str] = []
+    for fid in declared:
+        block = entries[fid]
+        status = block.get("status")
+        if status is None:
+            problems.append(
+                f"{fid}: missing `- Status:` line (expected resolved|waived)"
+            )
+            continue
+        if status not in allowed_statuses:
+            problems.append(
+                f"{fid}: invalid Status `{status}` "
+                f"(expected one of: {', '.join(sorted(allowed_statuses))})"
+            )
+            continue
+        if status == "waived":
+            reason = block.get("waiver_reason", "").strip()
+            if not reason:
+                problems.append(
+                    f"{fid}: Status is `waived` but `- Waiver-Reason:` line "
+                    "is missing or empty"
+                )
+
+    if problems:
+        raise WorkflowError(
+            f"Resolved review {resolved_file.name} has coverage issues:\n  - "
+            + "\n  - ".join(problems)
+        )
 
 
 def ensure_review_file(review_dir: Path, review_type: str, round_number: int) -> None:

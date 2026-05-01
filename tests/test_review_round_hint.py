@@ -151,8 +151,16 @@ def test_init_review_round_on_changes_requested_creates_round_2(tmp_path: Path) 
     )
     # Simulate resolved round 1 before driving to changes_requested so that
     # the subsequent re-entry into in_review can find its prior pair.
+    # init-review-round emits a `### finding-001` scaffold in the review `.md`,
+    # so the paired resolved must close that id (sprint-010 coverage gate).
     (task_dir / "review" / "code-review-round-001.resolved.md").write_text(
-        "# Resolved\n\n## Fixes\n\n- code fixed\n\n## Verification\n\n- pytest\n",
+        "# Resolved\n\n"
+        "## Fixes\n\n"
+        "### finding-001\n"
+        "- Status: resolved\n"
+        "- Fix: code fixed\n"
+        "- Evidence: pytest\n\n"
+        "## Verification\n\n- pytest\n",
         encoding="utf-8",
     )
     _advance(tmp_path, task_dir, "changes_requested")
@@ -226,9 +234,17 @@ def test_init_review_round_rejected_from_ready_to_merge_hints_done(tmp_path: Pat
     for s in ("planned", "red", "green"):
         _advance(tmp_path, task_dir, s)
     run_cli(["init-review-round", "--task-dir", str(task_dir)], cwd=tmp_path)
-    # Need a resolved file to cross into ready_to_merge.
+    # Need a resolved file to cross into ready_to_merge. init-review-round
+    # emitted `### finding-001` in the review markdown, so the resolved file
+    # must close that id (sprint-010 coverage gate).
     (task_dir / "review" / "code-review-round-001.resolved.md").write_text(
-        "# Resolved\n\n## Fixes\n\n- nothing\n\n## Verification\n\n- pytest\n",
+        "# Resolved\n\n"
+        "## Fixes\n\n"
+        "### finding-001\n"
+        "- Status: resolved\n"
+        "- Fix: nothing\n"
+        "- Evidence: pytest\n\n"
+        "## Verification\n\n- pytest\n",
         encoding="utf-8",
     )
     _advance(tmp_path, task_dir, "ready_to_merge")

@@ -32,6 +32,11 @@ try:
         load_decree_checkpoint,
         write_decree_checkpoint,
     )
+    from .doctor import (
+        format_report_json,
+        format_report_text,
+        run_diagnostics,
+    )
     from .sprint_plan import (
         parse_bundles,
         parse_plan_entries,
@@ -104,6 +109,11 @@ except ImportError:
         load_active_task_status,
         load_decree_checkpoint,
         write_decree_checkpoint,
+    )
+    from doctor import (
+        format_report_json,
+        format_report_text,
+        run_diagnostics,
     )
     from sprint_plan import (
         parse_bundles,
@@ -450,6 +460,22 @@ def build_parser() -> argparse.ArgumentParser:
     add_project_locator_arguments(status)
     add_project_slug_argument(status)
     status.set_defaults(handler=handle_status)
+
+    doctor = add_command_parser(
+        subparsers,
+        "doctor",
+        help_text="Read-only repo-level health check (zombie tasks, stale checkpoints, missing projections, broken review pairs).",
+        example="workflowctl doctor --project-dir . --project-slug my-app",
+    )
+    add_project_locator_arguments(doctor)
+    add_project_slug_argument(doctor)
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit findings as JSON (errors/warnings/info/summary).",
+    )
+    doctor.set_defaults(handler=handle_doctor)
 
     finalize = add_command_parser(
         subparsers,
@@ -1392,6 +1418,20 @@ def handle_status(args: argparse.Namespace) -> None:
         )
 
     print("\n".join(lines))
+
+
+def handle_doctor(args: argparse.Namespace) -> None:
+    _workspace_root, project_dir, project_slug = resolve_project_context(
+        args.project_slug,
+        project_dir_value=args.project_dir,
+        root_value=args.root,
+    )
+    report = run_diagnostics(project_dir, project_slug)
+    if getattr(args, "json_output", False):
+        print(format_report_json(report))
+    else:
+        print(format_report_text(report))
+    sys.exit(report.exit_code())
 
 
 def handle_finalize(args: argparse.Namespace) -> None:
