@@ -12,6 +12,7 @@ try:
     from .constants import (
         ALLOWED_EXECUTION_PROFILES,
         ALLOWED_TASK_TYPE_TOKENS,
+        EXECUTION_PROFILE_DIRS,
         TERMINAL_STATUSES,
         THEKING_DIRNAME,
         WorkflowError,
@@ -91,6 +92,7 @@ except ImportError:
     from constants import (
         ALLOWED_EXECUTION_PROFILES,
         ALLOWED_TASK_TYPE_TOKENS,
+        EXECUTION_PROFILE_DIRS,
         TERMINAL_STATUSES,
         THEKING_DIRNAME,
         WorkflowError,
@@ -490,6 +492,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     finalize.add_argument("--task-dir", required=True)
     finalize.set_defaults(handler=handle_finalize)
+
+    verify = add_command_parser(
+        subparsers,
+        "verify",
+        help_text=(
+            "Run a command and append its output to verification/<profile>/evidence.md; "
+            "auto-append one line to agent-runs.jsonl. Wrapped command failure does NOT "
+            "propagate into verify's own exit code (only verify_error does)."
+        ),
+        example=(
+            "workflowctl verify --task-dir <TASK_DIR> --profile backend.cli "
+            "--command 'pytest tests/' --evidence-section unit-suite"
+        ),
+    )
+    verify.add_argument("--task-dir", required=True)
+    verify.add_argument(
+        "--profile",
+        required=True,
+        help="Execution profile name (web.browser / backend.http / backend.cli / backend.job).",
+    )
+    verify.add_argument(
+        "--command",
+        required=True,
+        help="Shell command string. Executed as `<shell> -c <command>`.",
+    )
+    verify.add_argument(
+        "--evidence-section",
+        required=True,
+        help="Evidence section name (anchor for '## <section>' in evidence.md).",
+    )
+    verify.add_argument("--cwd", default=None, help="Working directory for the command (default: task_dir).")
+    verify.add_argument("--timeout", type=int, default=300, help="Timeout in seconds (default: 300).")
+    verify.add_argument("--shell", default="/bin/bash", help="Shell binary (default: /bin/bash).")
+    verify.set_defaults(handler=handle_verify)
 
     return parser
 
@@ -1489,6 +1525,196 @@ def handle_finalize(args: argparse.Namespace) -> None:
             raise
 
     print(f"Finalized {task_dir} -> done")
+
+
+def handle_verify(args: argparse.Namespace) -> None:
+    """Run a wrapped command, append structured evidence, auto-log ledger.
+
+    MVP (sprint-013 TASK-002). See ADR-004. Scope excludes .raw/ size tiering,
+    head/tail flags, and same-second disambiguation — those are sprint-014.
+
+    Exit semantics:
+      - 0 when evidence was appended (including when the wrapped command failed).
+      - non-zero only for verify_error paths (bad task_dir, invalid profile,
+        write failure). verify_error is atomic: no evidence, no ledger line.
+    """
+
+    import shutil
+    import subprocess as _subprocess
+    import time
+
+    # --- Argument validation (verify_error path; must be atomic) ---
+    input_task_dir = Path(args.task_dir).expanduser()
+    if input_task_dir.is_symlink():
+        _verify_fail("task_dir must not be a symlink", args, task_dir=input_task_dir)
+        return
+    task_dir = input_task_dir.resolve()
+    try:
+        validate_task_dir(task_dir)
+    except WorkflowError as error:
+        _verify_fail(f"invalid task_dir: {error}", args, task_dir=task_dir)
+        return
+
+    profile = args.profile.strip()
+    if profile not in EXECUTION_PROFILE_DIRS:
+        allowed = ", ".join(sorted(EXECUTION_PROFILE_DIRS))
+        _verify_fail(
+            f"invalid --profile {profile!r}; expected one of: {allowed}",
+            args,
+            task_dir=task_dir,
+        )
+        return
+
+    section = args.evidence_section.strip()
+    if not section:
+        _verify_fail("--evidence-section must not be empty", args, task_dir=task_dir)
+        return
+
+    shell = args.shell
+    if shutil.which(shell) is None and not Path(shell).is_file():
+        _verify_fail(f"shell not found: {shell}", args, task_dir=task_dir)
+        return
+
+    cwd = Path(args.cwd).expanduser().resolve() if args.cwd else task_dir
+    if not cwd.is_dir():
+        _verify_fail(f"--cwd is not a directory: {cwd}", args, task_dir=task_dir)
+        return
+
+    profile_dir_name = EXECUTION_PROFILE_DIRS[profile]
+    profile_dir = task_dir / "verification" / profile_dir_name
+    # From here on we perform real writes. Any exception must propagate as
+    # verify_error BUT after evidence write begins there is no atomicity
+    # guarantee; the argument-validation block above is where atomicity matters.
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    evidence_md = profile_dir / "evidence.md"
+    ledger_path = task_dir / "agent-runs.jsonl"
+
+    # --- Run the command ---
+    started_at_iso = _verify_iso8601_now()
+    t0 = time.monotonic()
+    try:
+        completed = _subprocess.run(
+            [shell, "-c", args.command],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+        )
+        timed_out = False
+        command_exit = completed.returncode
+        output_text = (completed.stdout or "") + (completed.stderr or "")
+    except _subprocess.TimeoutExpired as error:
+        timed_out = True
+        command_exit = 124
+        output_text = (
+            (error.stdout.decode("utf-8", errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or ""))
+            + (error.stderr.decode("utf-8", errors="replace") if isinstance(error.stderr, bytes) else (error.stderr or ""))
+            + f"\n[workflowctl verify] command exceeded --timeout {args.timeout}s"
+        )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    # --- Build the evidence block ---
+    run_iso = started_at_iso
+    status_trailer = (
+        f"exit: {command_exit}\n"
+        f"run: {run_iso}\n"
+        f"duration_ms: {duration_ms}\n"
+    )
+    fenced_block = (
+        "```shell\n"
+        f"$ {args.command}\n"
+        f"{output_text.rstrip()}\n"
+        "```\n"
+        f"{status_trailer}"
+    )
+
+    pre_evidence_text = evidence_md.read_text(encoding="utf-8") if evidence_md.is_file() else ""
+    pre_evidence_len = len(pre_evidence_text)
+
+    section_header = f"## {section}"
+    if section_header in pre_evidence_text.splitlines():
+        # Append as a `### run` sub-heading at EOF under the existing section.
+        appendage = (
+            ("" if pre_evidence_text.endswith("\n") else "\n")
+            + f"\n### run {run_iso}\n\n"
+            + fenced_block
+        )
+        new_evidence_text = pre_evidence_text + appendage
+    else:
+        # Fresh section. If evidence.md already exists with free-form content,
+        # append the new section at EOF; preserve prior content verbatim.
+        appendage = (
+            ("" if pre_evidence_text.endswith("\n") or pre_evidence_text == "" else "\n")
+            + (f"\n{section_header}\n\n" if pre_evidence_text else f"{section_header}\n\n")
+            + fenced_block
+        )
+        new_evidence_text = pre_evidence_text + appendage
+
+    evidence_md.write_text(new_evidence_text, encoding="utf-8")
+    substantive_chars_appended = len(new_evidence_text) - pre_evidence_len
+
+    # --- Decide summary status ---
+    if timed_out:
+        summary_status = "command_failed"
+        ledger_status = "command_timeout"
+    elif command_exit != 0:
+        summary_status = "command_failed"
+        ledger_status = "command_failed"
+    else:
+        # ok vs ok_under_threshold (substantive char preview; non-blocking).
+        summary_status = "ok" if substantive_chars_appended >= 40 else "ok_under_threshold"
+        ledger_status = "command_ok"
+
+    # --- Append ledger line ---
+    ledger_line = {
+        "timestamp": run_iso,
+        "agent": "workflowctl-verify",
+        "purpose": f"evidence capture: {section}",
+        "input_artifact": args.command,
+        "output_artifact": f"verification/{profile_dir_name}/evidence.md#{section}",
+        "status": ledger_status,
+        "notes": (
+            f"exit={command_exit} duration_ms={duration_ms} "
+            f"substantive_delta={substantive_chars_appended}"
+        ),
+    }
+    pre_ledger_text = ledger_path.read_text(encoding="utf-8") if ledger_path.is_file() else ""
+    if pre_ledger_text and not pre_ledger_text.endswith("\n"):
+        pre_ledger_text += "\n"
+    new_ledger_text = pre_ledger_text + json.dumps(ledger_line, ensure_ascii=False) + "\n"
+    ledger_path.write_text(new_ledger_text, encoding="utf-8")
+
+    # --- Emit JSON summary ---
+    summary = {
+        "status": summary_status,
+        "exit": command_exit,
+        "duration_ms": duration_ms,
+        "substantive_chars_appended": substantive_chars_appended,
+        "section": section,
+        "evidence_path": str(evidence_md),
+    }
+    print(json.dumps(summary, ensure_ascii=False))
+
+
+def _verify_iso8601_now() -> str:
+    """Return UTC ISO8601 with Z suffix (second precision)."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _verify_fail(message: str, args: argparse.Namespace, *, task_dir: Path) -> None:
+    """Emit a verify_error JSON summary and exit non-zero WITHOUT side-effects."""
+    summary = {
+        "status": "verify_error",
+        "exit": None,
+        "duration_ms": 0,
+        "substantive_chars_appended": 0,
+        "section": getattr(args, "evidence_section", "") or "",
+        "evidence_path": None,
+        "error": message,
+    }
+    print(json.dumps(summary, ensure_ascii=False), file=sys.stderr)
+    raise WorkflowError(f"verify_error: {message}")
 
 
 # --- Shared helpers ---

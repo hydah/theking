@@ -139,6 +139,39 @@ def test_validator_silently_passes_when_handoff_file_absent(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# Case 1b: fresh scaffold (template-only content) -> silent pass
+# ---------------------------------------------------------------------------
+
+
+def test_validator_silently_passes_on_unpopulated_scaffold(tmp_path: Path) -> None:
+    """A handoff.md that is the freshly-scaffolded template (sections exist
+    but bodies are still HTML comment placeholders or empty) must be treated
+    the same as an absent file — silent pass. Otherwise every e2e test that
+    scaffolds a task and advances planned->red would be blocked before its
+    author has had a chance to fill Phase-1 notes."""
+    validator = _load_validator()
+    body_lines = [
+        "# Task Handoff",
+        "",
+        "## TL;DR",
+        "",
+        "<!-- 1-3 lines -->",
+        "",
+        "## Phase 1 Evidence Anchors",
+        f"- {SECTION_VIEWED}:",
+        "  <!-- - scripts/example.py:42 brief note on what you verified there -->",
+        f"- {SECTION_IMPACT}:",
+        "  <!-- - scripts/example.py:80 new function injected here -->",
+        "- Risk tags:",
+        "- Open questions:",
+        "",
+    ]
+    handoff = write_handoff(tmp_path, "\n".join(body_lines))
+    # Must not raise.
+    validator(handoff)
+
+
+# ---------------------------------------------------------------------------
 # Case 2: both target sections have zero file:line refs -> fail with hint
 # ---------------------------------------------------------------------------
 
@@ -237,18 +270,20 @@ def test_validator_rejects_ref_placed_in_unrelated_section(tmp_path: Path) -> No
 
 def test_validator_ignores_file_line_refs_inside_html_comments(tmp_path: Path) -> None:
     """The default template ships example file:line refs inside HTML comments
-    (e.g. `<!-- - scripts/example.py:42 ... -->`). A fresh scaffolded task
-    whose author has not filled anything substantive should still fail the
-    gate; comment examples must not constitute evidence of real Phase-1
-    scouting."""
+    (e.g. `<!-- - scripts/example.py:42 ... -->`). If the author has filled
+    some real content under target sections (so the file is not considered
+    an unpopulated scaffold) but that content lacks a real file:line anchor,
+    the comment examples must NOT rescue them — gate must still reject."""
     validator = _load_validator()
     body_lines = [
         "# Task Handoff",
         "",
         "## Phase 1 Evidence Anchors",
         f"- {SECTION_VIEWED}:",
+        "  - started reading validation.py but no line refs yet",
         "  <!-- - scripts/example.py:42 brief note on what you verified there -->",
         f"- {SECTION_IMPACT}:",
+        "  - plan to touch workflowctl handle_advance_status",
         "  <!-- - scripts/example.py:80 new function injected here -->",
         "- Risk tags:",
         "- Open questions:",
@@ -265,21 +300,23 @@ def test_validator_ignores_file_line_refs_inside_html_comments(tmp_path: Path) -
 
 def test_validator_ignores_multiline_html_comment_examples(tmp_path: Path) -> None:
     """Round-001 review finding-003: the real scaffold template TL;DR area
-    ships a *multi-line* HTML comment example. The lazy `.*?` + re.DOTALL
-    pair in HANDOFF_HTML_COMMENT_PATTERN handles this today, but must be
-    locked in by a regression test — otherwise a future refactor that drops
-    DOTALL would silently let multi-line comment examples leak into the
-    scan and every scaffolded task would bypass the gate."""
+    ships a *multi-line* HTML comment example. When the author has real
+    content under target sections but no file:line anchor, multi-line comment
+    examples (whether or not they contain bait file:line refs) must not
+    rescue the validator into passing. Regression lock for
+    HANDOFF_HTML_COMMENT_PATTERN + re.DOTALL."""
     validator = _load_validator()
     body_lines = [
         "# Task Handoff",
         "",
         "## Phase 1 Evidence Anchors",
         f"- {SECTION_VIEWED}:",
+        "  - author started scouting but no line refs yet",
         "  <!-- Example spans",
         "  multiple lines, still contains",
         "  scripts/validation.py:747 as bait -->",
         f"- {SECTION_IMPACT}:",
+        "  - plans to touch gate hook",
         "  <!-- also multi-line",
         "  scripts/workflowctl.py:720 inside a cross-line block -->",
         "- Risk tags:",

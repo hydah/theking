@@ -834,6 +834,17 @@ def validate_handoff_evidence_anchors(handoff_path: Path) -> None:
     if _handoff_has_anchor_under_target_section(stripped_content):
         return
 
+    # Treat an unpopulated scaffold (both target sections present but empty
+    # after stripping comments) as "not filled yet" — silent pass, same as
+    # a fully absent handoff.md. This lets test fixtures and fresh scaffolds
+    # move planned->red without being punished before the author has had a
+    # chance to fill Phase-1 notes. The gate only bites once the author has
+    # written *some* content under one of the target sections without a
+    # file:line anchor — that is the actual "partially filled, not evidenced"
+    # state we want to catch.
+    if not _handoff_target_sections_have_any_content(stripped_content):
+        return
+
     section_list = " or ".join(f"'{name}'" for name in HANDOFF_TARGET_SECTIONS)
     raise WorkflowError(
         "handoff.md is missing a file:line evidence anchor. Add at least one "
@@ -900,6 +911,58 @@ def _handoff_has_anchor_under_target_section(content: str) -> bool:
         if in_target and indent > target_indent:
             if HANDOFF_FILE_LINE_PATTERN.search(raw_line):
                 return True
+    return False
+
+
+def _handoff_target_sections_have_any_content(content: str) -> bool:
+    """Return True iff at least one target section has a non-empty child bullet.
+
+    Used to distinguish "unpopulated scaffold" (both sections present but no
+    child content yet — silent pass) from "partially filled but no file:line
+    anchor" (at least one child bullet exists, but none match \\S+:\\d+ — must
+    be rejected).
+
+    Mirrors the parsing in _handoff_has_anchor_under_target_section but only
+    tracks whether any child bullet text survives under a target section.
+    """
+
+    def leading_ws(line: str) -> int:
+        return len(line) - len(line.lstrip(" "))
+
+    in_target = False
+    target_indent = -1
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("#"):
+            in_target = False
+            target_indent = -1
+            continue
+        if not stripped:
+            continue
+        indent = leading_ws(raw_line)
+        if stripped.startswith("- "):
+            bullet_body = stripped[2:].rstrip()
+            matched_target = None
+            for name in HANDOFF_TARGET_SECTIONS:
+                if bullet_body == f"{name}:" or bullet_body.startswith(f"{name}:"):
+                    matched_target = name
+                    break
+            if matched_target is not None:
+                trailing_after_colon = bullet_body[len(matched_target) + 1 :].strip()
+                if trailing_after_colon:
+                    return True
+                in_target = True
+                target_indent = indent
+                continue
+            if in_target and indent <= target_indent:
+                in_target = False
+                target_indent = -1
+                # Fall through: this bullet belongs to a non-target sibling,
+                # not to a target section.
+                continue
+        if in_target and indent > target_indent:
+            # Any non-empty child line (bullet or prose) counts as "content".
+            return True
     return False
 
 
