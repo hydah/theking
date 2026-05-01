@@ -263,6 +263,37 @@ def test_validator_ignores_file_line_refs_inside_html_comments(tmp_path: Path) -
     assert FORMAT_HINT_TOKEN in msg
 
 
+def test_validator_ignores_multiline_html_comment_examples(tmp_path: Path) -> None:
+    """Round-001 review finding-003: the real scaffold template TL;DR area
+    ships a *multi-line* HTML comment example. The lazy `.*?` + re.DOTALL
+    pair in HANDOFF_HTML_COMMENT_PATTERN handles this today, but must be
+    locked in by a regression test — otherwise a future refactor that drops
+    DOTALL would silently let multi-line comment examples leak into the
+    scan and every scaffolded task would bypass the gate."""
+    validator = _load_validator()
+    body_lines = [
+        "# Task Handoff",
+        "",
+        "## Phase 1 Evidence Anchors",
+        f"- {SECTION_VIEWED}:",
+        "  <!-- Example spans",
+        "  multiple lines, still contains",
+        "  scripts/validation.py:747 as bait -->",
+        f"- {SECTION_IMPACT}:",
+        "  <!-- also multi-line",
+        "  scripts/workflowctl.py:720 inside a cross-line block -->",
+        "- Risk tags:",
+        "- Open questions:",
+        "",
+    ]
+    handoff = write_handoff(tmp_path, "\n".join(body_lines))
+    with pytest.raises(WorkflowError) as exc_info:
+        validator(handoff)
+    msg = str(exc_info.value)
+    assert SECTION_VIEWED in msg
+    assert SECTION_IMPACT in msg
+
+
 # ---------------------------------------------------------------------------
 # Case 6: planned -> green transition is NOT guarded by the gate
 # ---------------------------------------------------------------------------
