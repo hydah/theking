@@ -149,6 +149,7 @@ def validate_task_dir(task_dir: Path) -> None:
         flow=normalize_task_flow(task_data.get("flow")),
     )
     validate_review_requirements(task_paths.review_dir, validated)
+    validate_agent_runs_ledger(task_paths.task_dir / "agent-runs.jsonl")
 
 
 def validate_task_location(task_dir: Path) -> None:
@@ -231,6 +232,7 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
     expected_requires_security_review = task_requires_security_review(task_type, execution_profile)
     expected_verification_profile = infer_verification_profile(execution_profile)
     expected_agents = infer_required_agents(task_type, execution_profile)
+    legacy_expected_agents = ["planner", *expected_agents]
 
     if task_data["requires_security_review"] != expected_requires_security_review:
         raise WorkflowError(
@@ -242,7 +244,8 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
             "verification_profile does not match execution_profile "
             f"{execution_profile}: expected {', '.join(expected_verification_profile)}"
         )
-    if task_data["required_agents"] != expected_agents:
+    actual_agents = tuple(stringify(agent) for agent in task_data["required_agents"])
+    if actual_agents not in {tuple(expected_agents), tuple(legacy_expected_agents)}:
         raise WorkflowError(
             "required_agents does not match task_type "
             f"{task_type}: expected {', '.join(expected_agents)}"
@@ -728,6 +731,175 @@ def has_substantive_verification_evidence(profile_dir: Path) -> bool:
         total += substantive_text_length(content)
         if total >= SUBSTANTIVE_EVIDENCE_MIN_CHARS:
             return True
+    return False
+
+
+AGENT_RUN_LEDGER_REQUIRED_FIELDS: frozenset[str] = frozenset(
+    {
+        "timestamp",
+        "agent",
+        "purpose",
+        "input_artifact",
+        "output_artifact",
+        "status",
+        "notes",
+    }
+)
+
+
+def validate_agent_runs_ledger(ledger_path: Path) -> None:
+    """Validate optional task-level agent run audit metadata.
+
+    The ledger is intentionally optional and non-authoritative: it helps humans
+    see which subagents were invoked, but it is not proof that an external
+    runtime actually executed those agents.
+    """
+
+    if not ledger_path.exists():
+        return
+    if ledger_path.is_symlink():
+        raise WorkflowError("agent-runs.jsonl must not be a symlink")
+    if not ledger_path.is_file():
+        raise WorkflowError("agent-runs.jsonl must be a file")
+    try:
+        content = ledger_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise WorkflowError("agent-runs.jsonl must be readable UTF-8 JSONL") from error
+    if not content.strip():
+        return
+
+    for line_number, raw_line in enumerate(content.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise WorkflowError(
+                f"agent-runs.jsonl line {line_number} must be a valid JSON object"
+            ) from error
+        if not isinstance(payload, dict):
+            raise WorkflowError(
+                f"agent-runs.jsonl line {line_number} must be a JSON object"
+            )
+        missing = sorted(AGENT_RUN_LEDGER_REQUIRED_FIELDS - set(payload))
+        if missing:
+            raise WorkflowError(
+                f"agent-runs.jsonl line {line_number} is missing required fields: "
+                f"{', '.join(missing)}"
+            )
+
+
+HANDOFF_TARGET_SECTIONS: tuple[str, ...] = (
+    "Viewed code/tests/docs",
+    "Impact surface",
+)
+HANDOFF_FILE_LINE_PATTERN = re.compile(r"\S+:\d+")
+HANDOFF_HTML_COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def validate_handoff_evidence_anchors(handoff_path: Path) -> None:
+    """Validate that handoff.md has at least one `file:line` anchor under
+    either 'Viewed code/tests/docs' or 'Impact surface'.
+
+    File-existence-first: if the handoff file is absent, the gate silently
+    passes. This protects legacy tasks created before sprint-011 (which do
+    not own a handoff.md) from being punished by a new gate.
+
+    Scope: only scans the two target sections listed in
+    HANDOFF_TARGET_SECTIONS. References buried in unrelated sections
+    (e.g. 'Known Pitfalls') do NOT count as valid anchors — Phase-1
+    scouting evidence belongs in one of the two designated surfaces.
+
+    Raises WorkflowError with an actionable hint naming both section
+    names and the expected `\\S+:\\d+` format.
+    """
+
+    if not handoff_path.exists():
+        return
+    if handoff_path.is_symlink():
+        raise WorkflowError("handoff.md must not be a symlink")
+    if not handoff_path.is_file():
+        raise WorkflowError("handoff.md must be a file")
+    try:
+        content = handoff_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise WorkflowError("handoff.md must be readable UTF-8 text") from error
+
+    # Strip HTML comments before scanning: the default template ships example
+    # `file:line` refs inside `<!-- ... -->` blocks so authors see the expected
+    # shape. Those examples must NOT count as real Phase-1 anchors.
+    stripped_content = HANDOFF_HTML_COMMENT_PATTERN.sub("", content)
+
+    if _handoff_has_anchor_under_target_section(stripped_content):
+        return
+
+    section_list = " or ".join(f"'{name}'" for name in HANDOFF_TARGET_SECTIONS)
+    raise WorkflowError(
+        "handoff.md is missing a file:line evidence anchor. Add at least one "
+        f"bullet under {section_list} that matches the pattern "
+        r"\S+:\d+"
+        " (for example: '- scripts/validation.py:747 substantive evidence helper'). "
+        "This gate fires only on the planned->red transition; edit handoff.md "
+        "and re-run `workflowctl advance-status --to-status red`."
+    )
+
+
+def _handoff_has_anchor_under_target_section(content: str) -> bool:
+    """Return True iff at least one line under a target section has `\\S+:\\d+`.
+
+    Parsing model:
+      - A bullet line starting with `- <section-name>:` (possibly indented)
+        opens a section scope; any following bullets that are MORE indented
+        are considered 'within' that section until a sibling/parent bullet
+        closes it.
+      - A markdown header (`#`, `##`, ...) also closes any open section scope.
+
+    This mirrors the two-level bullet structure emitted by
+    templates/workflow/handoff.md.tmpl.
+    """
+
+    def leading_ws(line: str) -> int:
+        return len(line) - len(line.lstrip(" "))
+
+    in_target = False
+    target_indent = -1
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        # A markdown heading always closes the current target scope.
+        if stripped.startswith("#"):
+            in_target = False
+            target_indent = -1
+            continue
+        if not stripped:
+            continue
+        indent = leading_ws(raw_line)
+        # Detect start of a target section: bullet of the form
+        #   `- <TARGET_SECTION>:` (trailing content tolerated).
+        if stripped.startswith("- "):
+            bullet_body = stripped[2:].rstrip()
+            matched_target = None
+            for name in HANDOFF_TARGET_SECTIONS:
+                # Section header bullets look like "- Viewed code/tests/docs:"
+                # (possibly with trailing colon only). Trailing refs on the
+                # same line would already count and are accepted.
+                if bullet_body == f"{name}:" or bullet_body.startswith(f"{name}:"):
+                    matched_target = name
+                    break
+            if matched_target is not None:
+                # Same-line ref on the header counts.
+                if HANDOFF_FILE_LINE_PATTERN.search(bullet_body[len(matched_target) + 1 :]):
+                    return True
+                in_target = True
+                target_indent = indent
+                continue
+            # Non-target bullet at the same or outer indent closes the scope.
+            if in_target and indent <= target_indent:
+                in_target = False
+                target_indent = -1
+        if in_target and indent > target_indent:
+            if HANDOFF_FILE_LINE_PATTERN.search(raw_line):
+                return True
     return False
 
 
@@ -1369,7 +1541,7 @@ def infer_verification_profile(execution_profile: str) -> list[str]:
 
 
 def infer_required_agents(task_type: str, execution_profile: str) -> list[str]:
-    agents = ["planner", "tdd-guide", "code-reviewer"]
+    agents = ["tdd-guide", "code-reviewer"]
     if execution_profile == "web.browser":
         agents.append("e2e-runner")
     if task_requires_security_review(task_type, execution_profile):

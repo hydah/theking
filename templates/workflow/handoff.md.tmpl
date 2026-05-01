@@ -1,0 +1,42 @@
+# Task Handoff
+
+> Purpose: compact Phase 1 context for downstream agents. This file is input context, not a replacement for `spec.md`.
+
+## TL;DR
+
+<!-- 1-3 lines. What is this task about and what is the single most important
+constraint downstream agents must respect? -->
+
+## Phase 1 Evidence Anchors
+
+<!-- Soft gate on planned->red: at least one bullet under 'Viewed code/tests/docs'
+OR 'Impact surface' must contain a file:line reference matching \S+:\d+
+(e.g. '- scripts/validation.py:747 substantive evidence helper'). Bare prose
+without a colon-number pair will be rejected so trivial bypasses (empty
+bullets) do not pass the gate. -->
+
+- Viewed code/tests/docs:
+  <!-- - scripts/example.py:42 brief note on what you verified there -->
+- Impact surface:
+  <!-- - scripts/example.py:80 new function injected here -->
+- Risk tags:
+- Open questions:
+
+## Planner Notes
+- Key dependencies:
+- Architecture constraints:
+- Task splitting caveats:
+
+## TDD Notes
+- Reusable test helpers:
+- Existing test patterns:
+- Edge cases to cover:
+
+## Reviewer Notes
+- Known nearby issues not in scope:
+- Scope boundaries to enforce:
+- Verification evidence expected:
+
+## Known Pitfalls
+- <!-- file:line refs here do NOT count toward the Phase-1 anchor gate;
+       put scouting evidence under the two sections above. -->

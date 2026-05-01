@@ -283,6 +283,84 @@ def test_init_task_generated_spec_requires_author_input_before_red(tmp_path: Pat
     assert retry_red_result.returncode == 0, retry_red_result.stderr
 
 
+def test_init_task_creates_handoff_artifact(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+
+    result = run_cli(
+        [
+            "init-task",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--slug",
+            "handoff-demo",
+            "--title",
+            "Handoff Demo",
+            "--task-type",
+            "general",
+            "--execution-profile",
+            "backend.cli",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    task_dir = (
+        workflow_root(tmp_path)
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-handoff-demo"
+    )
+    handoff_md = task_dir / "handoff.md"
+
+    assert handoff_md.is_file(), "init-task should scaffold handoff.md beside task.md and spec.md"
+    handoff_text = handoff_md.read_text(encoding="utf-8")
+    assert "Phase 1" in handoff_text or "handoff" in handoff_text.lower()
+    assert "Planner" in handoff_text or "TDD" in handoff_text or "Reviewer" in handoff_text
+
+
+def test_init_task_creates_agent_run_ledger_artifact(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+
+    result = run_cli(
+        [
+            "init-task",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--slug",
+            "ledger-demo",
+            "--title",
+            "Ledger Demo",
+            "--task-type",
+            "general",
+            "--execution-profile",
+            "backend.cli",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    task_dir = (
+        workflow_root(tmp_path)
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-ledger-demo"
+    )
+    ledger = task_dir / "agent-runs.jsonl"
+
+    assert ledger.is_file(), "init-task should scaffold an optional agent-runs.jsonl ledger"
+    assert ledger.read_text(encoding="utf-8") == ""
+
+
 def test_init_task_rejects_sprint_path_escape(tmp_path: Path) -> None:
     bootstrap_sprint(tmp_path)
     escape_dir = workflow_root(tmp_path) / "escape"
@@ -495,13 +573,13 @@ def test_init_task_rejects_symlinked_sprint_directory(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("task_type", "execution_profile", "expected_agents", "verification_dir"),
     [
-        ("frontend", "web.browser", ["planner", "tdd-guide", "code-reviewer", "e2e-runner"], "browser"),
-        ("auth", "backend.http", ["planner", "tdd-guide", "code-reviewer", "security-reviewer"], "http"),
-        ("general", "backend.cli", ["planner", "tdd-guide", "code-reviewer"], "cli"),
+        ("frontend", "web.browser", ["tdd-guide", "code-reviewer", "e2e-runner"], "browser"),
+        ("auth", "backend.http", ["tdd-guide", "code-reviewer", "security-reviewer"], "http"),
+        ("general", "backend.cli", ["tdd-guide", "code-reviewer"], "cli"),
         (
             "auth",
             "web.browser",
-            ["planner", "tdd-guide", "code-reviewer", "e2e-runner", "security-reviewer"],
+            ["tdd-guide", "code-reviewer", "e2e-runner", "security-reviewer"],
             "browser",
         ),
     ],
@@ -565,6 +643,47 @@ def test_init_task_assigns_required_agents_by_task_type_and_execution_profile(
         / "verification"
         / verification_dir
     ).is_dir()
+
+
+def test_init_task_auth_web_preserves_e2e_and_security_agents(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+
+    result = run_cli(
+        [
+            "init-task",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--slug",
+            "auth-web-task",
+            "--title",
+            "Auth Web Task",
+            "--task-type",
+            "auth,web",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    task_md = (
+        workflow_root(tmp_path)
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-auth-web-task"
+        / "task.md"
+    )
+    frontmatter = parse_frontmatter(task_md.read_text(encoding="utf-8"))
+    assert frontmatter["execution_profile"] == "web.browser"
+    assert frontmatter["required_agents"] == [
+        "tdd-guide",
+        "code-reviewer",
+        "e2e-runner",
+        "security-reviewer",
+    ]
 
 
 @pytest.mark.parametrize(

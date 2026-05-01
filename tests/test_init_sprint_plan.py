@@ -5,7 +5,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "workflowctl.py"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from validation import parse_frontmatter  # noqa: E402
 
 
 def run_cli(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -111,6 +115,108 @@ def test_init_sprint_plan_creates_all_tasks_with_dependencies(tmp_path: Path) ->
 
     auth_task = (tasks_dir / "TASK-001-auth-setup" / "task.md").read_text(encoding="utf-8")
     assert "depends_on:" in auth_task
+
+
+def test_init_sprint_plan_omits_planner_from_required_agents(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan_file = write_plan(
+        tmp_path,
+        {"tasks": [{"slug": "cli-task", "title": "CLI Task", "task_type": "general"}]},
+    )
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    task_md = (
+        workflow_root(tmp_path)
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-001-cli-task"
+        / "task.md"
+    )
+    frontmatter = parse_frontmatter(task_md.read_text(encoding="utf-8"))
+    assert frontmatter["required_agents"] == ["tdd-guide", "code-reviewer"]
+
+
+def test_init_sprint_plan_creates_handoff_artifacts(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan = {
+        "tasks": [
+            {"slug": "task-a", "title": "Task A", "task_type": "general"},
+            {"slug": "task-b", "title": "Task B", "task_type": "frontend"},
+        ],
+    }
+    plan_file = write_plan(tmp_path, plan)
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    tasks_dir = workflow_root(tmp_path) / "sprints" / "sprint-001-foundation" / "tasks"
+    for task_name in ("TASK-001-task-a", "TASK-002-task-b"):
+        handoff_md = tasks_dir / task_name / "handoff.md"
+        assert handoff_md.is_file(), f"{task_name} should include handoff.md"
+        handoff_text = handoff_md.read_text(encoding="utf-8")
+        assert "Phase 1" in handoff_text or "handoff" in handoff_text.lower()
+
+
+def test_init_sprint_plan_creates_agent_run_ledger_artifacts(tmp_path: Path) -> None:
+    bootstrap_sprint(tmp_path)
+    plan = {
+        "tasks": [
+            {"slug": "task-a", "title": "Task A", "task_type": "general"},
+            {"slug": "task-b", "title": "Task B", "task_type": "auth"},
+        ],
+    }
+    plan_file = write_plan(tmp_path, plan)
+
+    result = run_cli(
+        [
+            "init-sprint-plan",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--sprint",
+            "sprint-001-foundation",
+            "--plan-file",
+            str(plan_file),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    tasks_dir = workflow_root(tmp_path) / "sprints" / "sprint-001-foundation" / "tasks"
+    for task_name in ("TASK-001-task-a", "TASK-002-task-b"):
+        ledger = tasks_dir / task_name / "agent-runs.jsonl"
+        assert ledger.is_file(), f"{task_name} should include agent-runs.jsonl"
+        assert ledger.read_text(encoding="utf-8") == ""
 
 
 def test_init_sprint_plan_accepts_project_root_as_project_dir(tmp_path: Path) -> None:

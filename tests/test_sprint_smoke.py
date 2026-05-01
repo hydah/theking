@@ -625,3 +625,24 @@ def test_multi_task_sprint_does_not_use_single_task_fallback(
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
 
+
+def test_skill_documents_single_task_sprint_smoke_fallback() -> None:
+    content = SKILL_MD.read_text(encoding="utf-8")
+    phase5_start = content.find("Phase 5:")
+    assert phase5_start >= 0, "Phase 5 section must exist"
+    candidates = [
+        content.find("\n---\n", phase5_start + 1),
+        content.find("## 🔁", phase5_start + 1),
+        content.find("\n## ", phase5_start + 1),
+    ]
+    phase5_end = min(candidate for candidate in candidates if candidate >= 0)
+    phase5_body = content[phase5_start:phase5_end]
+    normalized = phase5_body.lower()
+
+    assert "single-task" in normalized or "单 task" in phase5_body or "单任务" in phase5_body
+    assert "task-level" in normalized or "任务级" in phase5_body
+    assert "fallback" in normalized or "复用" in phase5_body or "reuse" in normalized
+    assert "multi-task" in normalized or "多 task" in phase5_body or "多任务" in phase5_body
+    assert "sprint-level" in normalized or "sprint 级" in phase5_body or "冲刺级" in phase5_body
+    assert "deep review" in normalized or "深度" in phase5_body or "全量回归" in phase5_body
+

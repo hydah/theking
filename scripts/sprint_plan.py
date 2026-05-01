@@ -418,7 +418,7 @@ def write_task_files(
     bundle: str | None = None,
     review_mode: str = "light",
 ) -> None:
-    """Write task.md and spec.md into a task directory."""
+    """Write task.md, spec.md, and optional audit/context artifacts."""
     depends_on_block = (
         "\n".join(f"  - {dep}" for dep in depends_on)
         if depends_on
@@ -452,6 +452,12 @@ def write_task_files(
         ),
         encoding="utf-8",
     )
+
+    handoff_md = task_dir / "handoff.md"
+    handoff_md.write_text(render_template("handoff.md.tmpl"), encoding="utf-8")
+
+    agent_runs = task_dir / "agent-runs.jsonl"
+    agent_runs.write_text("", encoding="utf-8")
 
 
 def render_spec_markdown(

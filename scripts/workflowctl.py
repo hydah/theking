@@ -83,6 +83,7 @@ try:
         validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
+        validate_handoff_evidence_anchors,
         write_if_missing,
         write_task_document,
     )
@@ -161,6 +162,7 @@ except ImportError:
         validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
+        validate_handoff_evidence_anchors,
         write_if_missing,
         write_task_document,
     )
@@ -464,7 +466,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = add_command_parser(
         subparsers,
         "doctor",
-        help_text="Read-only repo-level health check (zombie tasks, stale checkpoints, missing projections, broken review pairs).",
+        help_text=(
+            "Read-only repo-level health check (zombie tasks, stale checkpoints, "
+            "stale active-task markers, missing projections, broken review pairs)."
+        ),
         example="workflowctl doctor --project-dir . --project-slug my-app",
     )
     add_project_locator_arguments(doctor)
@@ -733,6 +738,11 @@ def handle_advance_status(args: argparse.Namespace) -> None:
         current_status = stringify(task_data["status"])
         if current_status != "blocked" or infer_blocked_resume_status([stringify(entry) for entry in task_data["status_history"]]) != "in_review":
             raise WorkflowError("Use init-review-round to enter in_review")
+
+    # Handoff evidence anchor gate: only fires on planned->red.
+    # File-existence-first — legacy tasks without handoff.md are not punished.
+    if requested_status == "red" and stringify(task_data["status"]) == "planned":
+        validate_handoff_evidence_anchors(task_paths.task_dir / "handoff.md")
 
     updated_task = apply_status_transition(task_data, requested_status)
 

@@ -13,7 +13,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "workflowctl.py"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from scaffold import build_runtime_template_vars  # noqa: E402
+from validation import render_template  # noqa: E402
+
+
+def render_workflow_skill() -> str:
+    return render_template(
+        "skill_workflow_governance.md.tmpl",
+        **build_runtime_template_vars("demo-app"),
+    )
+
 
 SPEC_CONTENT = "\n".join(
     [
@@ -390,3 +403,32 @@ def test_finalize_appears_in_help(tmp_path: Path) -> None:
     assert "finalize" in result.stdout, (
         f"Expected 'finalize' in --help output. stdout={result.stdout!r}"
     )
+
+
+def test_finalize_documented_in_workflow_skill_command_index() -> None:
+    text = render_workflow_skill()
+    index_start = text.find("workflowctl 命令索引")
+    assert index_start >= 0, "workflowctl command index section must exist"
+    index_slice = text[index_start : index_start + 2500]
+
+    assert "finalize" in index_slice, (
+        "Command index must list `workflowctl finalize` as a quick-reference command. "
+        f"Index slice:\n{index_slice}"
+    )
+
+
+def test_finalize_documented_as_phase4_terminal_shortcut() -> None:
+    text = render_workflow_skill()
+    step8_start = text.find("8. 盖印")
+    assert step8_start >= 0, "Phase 4 step 8 terminal-check section must exist"
+    next_section = text.find("####", step8_start + 1)
+    step8_body = text[step8_start : next_section if next_section >= 0 else step8_start + 2500]
+
+    assert "finalize" in step8_body, (
+        "Phase 4 terminal step should document `workflowctl finalize` as the preferred batched path. "
+        f"Step 8 body:\n{step8_body}"
+    )
+    assert "workflowctl check" in step8_body
+    assert "--to-status ready_to_merge" in step8_body
+    assert "--to-status done" in step8_body
+    assert "bypass" not in step8_body.lower()

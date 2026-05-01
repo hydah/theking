@@ -216,6 +216,101 @@ def make_valid_task_tree(
     return task_dir
 
 
+def test_check_accepts_legacy_required_agents_with_planner(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+        required_agents=["planner", "tdd-guide", "code-reviewer"],
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, (
+        "Legacy task.md files that still list planner must remain checkable. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.parametrize("ledger_content", [None, ""])
+def test_check_allows_missing_or_empty_agent_runs_ledger(
+    tmp_path: Path,
+    ledger_content: str | None,
+) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+    )
+    ledger = task_dir / "agent-runs.jsonl"
+    if ledger_content is not None:
+        write_text(ledger, ledger_content)
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, (
+        "agent-runs.jsonl is optional audit metadata; missing/empty ledgers "
+        f"must not block check. stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "ledger_content",
+    [
+        "{not json}\n",
+        "[]\n",
+        '{"timestamp":"2026-05-01T00:00:00Z","agent":"tdd-guide"}\n',
+        (
+            '{"timestamp":"2026-05-01T00:00:00Z","agent":"tdd-guide",'
+            '"purpose":"write red tests","input_artifact":"spec.md",'
+            '"output_artifact":"tests/test_check_rules.py","status":"ok",'
+            '"notes":"valid first line"}\n'
+            "{broken second line}\n"
+        ),
+    ],
+)
+def test_check_rejects_malformed_agent_runs_ledger(
+    tmp_path: Path,
+    ledger_content: str,
+) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+    )
+    write_text(task_dir / "agent-runs.jsonl", ledger_content)
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, (
+        "Non-empty agent-runs.jsonl must be valid JSONL objects with required fields. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "agent-runs.jsonl" in result.stderr
+
+
+def test_check_accepts_valid_agent_runs_ledger_with_extra_fields(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+    )
+    write_text(
+        task_dir / "agent-runs.jsonl",
+        '{"timestamp":"2026-05-01T00:00:00Z","agent":"tdd-guide",'
+        '"purpose":"write red tests","input_artifact":"spec.md",'
+        '"output_artifact":"tests/test_check_rules.py","status":"ok",'
+        '"notes":"covered edge cases","extra":"forward-compatible"}\n',
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, (
+        "Valid ledger objects may include extra fields for forward compatibility. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
 @pytest.mark.parametrize(
     "missing_name",
     ["task.md", "spec.md", "review", "verification"],

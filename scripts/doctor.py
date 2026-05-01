@@ -1,11 +1,12 @@
 """workflowctl doctor — repo-level read-only health check.
 
-Four finding categories:
+Five finding categories:
   D1 — zombie task (unfinished + Goal section placeholder/empty)
   D2 — stale decree checkpoint (references a sprint where all tasks are done
        or the sprint is sealed)
   D3 — missing projection directory (runtime exposure partially torn)
   D4 — broken review pair on done/ready_to_merge task (runs validate_task_dir)
+  D5 — stale active-task recovery marker
 
 Severity levels:
   error   — correctness violation; exit 1
@@ -31,6 +32,7 @@ try:
     )
     from .sprint_plan import sprint_is_sealed
     from .validation import (
+        derive_task_paths,
         get_theking_dir,
         get_workflow_project_dir,
         load_task_document,
@@ -45,6 +47,7 @@ except ImportError:  # pragma: no cover - dual-import fallback
     )
     from sprint_plan import sprint_is_sealed  # type: ignore[no-redef]
     from validation import (  # type: ignore[no-redef]
+        derive_task_paths,
         get_theking_dir,
         get_workflow_project_dir,
         load_task_document,
@@ -312,6 +315,102 @@ def check_stale_checkpoint(
         )
 
 
+# ---------- D5: stale active-task recovery marker ----------
+
+
+def check_active_task_marker(project_dir: Path, report: DoctorReport) -> None:
+    active_task = get_theking_dir(project_dir) / "active-task"
+    if not active_task.exists():
+        return
+    if not active_task.is_file():
+        report.add(
+            Finding(
+                level="warning",
+                category="D5",
+                message="active-task marker is not a file",
+                hint="Run `workflowctl activate --task-dir <TASK_DIR>` to refresh it or `workflowctl deactivate --project-dir . --force` to clear it.",
+            )
+        )
+        return
+
+    raw = active_task.read_text(encoding="utf-8").strip()
+    if not raw:
+        report.add(
+            Finding(
+                level="warning",
+                category="D5",
+                message="active-task marker is empty",
+                hint="Run `workflowctl activate --task-dir <TASK_DIR>` to refresh it or remove .theking/active-task.",
+            )
+        )
+        return
+
+    task_dir = Path(raw).expanduser()
+    if not task_dir.is_absolute():
+        task_dir = project_dir / task_dir
+    resolved_task_dir = task_dir.resolve(strict=False)
+    task_label = resolved_task_dir.name or raw
+
+    if resolved_task_dir.is_symlink():
+        report.add(
+            Finding(
+                level="warning",
+                category="D5",
+                message=f"active-task points at a symlinked task directory: {task_label}",
+                hint="Re-activate a real task directory; active-task symlinks are not trusted.",
+            )
+        )
+        return
+    if not resolved_task_dir.is_dir():
+        report.add(
+            Finding(
+                level="warning",
+                category="D5",
+                message=f"active-task points at missing task directory: {task_label}",
+                hint="Run `workflowctl activate --task-dir <TASK_DIR>` for current work or clear the stale marker with deactivate --force.",
+            )
+        )
+        return
+
+    try:
+        task_paths = derive_task_paths(resolved_task_dir)
+        task_data, _body = load_task_document(task_paths.task_md)
+    except WorkflowError as error:
+        report.add(
+            Finding(
+                level="warning",
+                category="D5",
+                message=f"active-task points at an invalid task directory: {task_label} ({error})",
+                hint="Re-run workflowctl activate with a valid task directory.",
+            )
+        )
+        return
+
+    status = stringify(task_data.get("status", "")).strip()
+    task_id = stringify(task_data.get("id", task_label))
+    if status in {"done", "blocked"}:
+        report.add(
+            Finding(
+                level="warning",
+                category="D5",
+                message=f"Stale active-task marker — {task_id} is terminal ({status})",
+                hint="Run `workflowctl deactivate --project-dir .` or activate the next unfinished task.",
+            )
+        )
+        return
+
+    sprint_md = task_paths.sprint_dir / "sprint.md"
+    if sprint_md.is_file() and sprint_is_sealed(sprint_md):
+        report.add(
+            Finding(
+                level="warning",
+                category="D5",
+                message=f"active-task points into sealed sprint: {task_id}",
+                hint="Sealed sprints are immutable; create or activate a follow-up task instead.",
+            )
+        )
+
+
 # ---------- D3: missing projection directory ----------
 
 
@@ -425,6 +524,7 @@ def run_diagnostics(project_dir: Path, project_slug: str) -> DoctorReport:
     report = DoctorReport()
     check_zombie_tasks(project_dir, project_slug, report)
     check_stale_checkpoint(project_dir, project_slug, report)
+    check_active_task_marker(project_dir, report)
     check_projection_dirs(project_dir, report)
     check_done_task_integrity(project_dir, project_slug, report)
     return report

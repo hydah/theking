@@ -1,10 +1,11 @@
 """workflowctl doctor — repo-level read-only health check (sprint-010 TASK-002).
 
-Four finding categories:
+Five finding categories:
   D1 — zombie task (unfinished + Goal still placeholder/empty)
   D2 — stale decree checkpoint (points at sealed/done sprint)
   D3 — missing projection directory (runtime exposure partially torn)
   D4 — broken review pair on done/ready_to_merge task
+  D5 — stale active-task recovery marker
 """
 from __future__ import annotations
 
@@ -148,7 +149,51 @@ def _fill_goal(task_md: Path, goal_text: str) -> None:
     task_md.write_text(new, encoding="utf-8")
 
 
+def _write_active_task(project_dir: Path, task_dir_text: str) -> Path:
+    active_task = project_dir / ".theking" / "active-task"
+    active_task.write_text(task_dir_text + "\n", encoding="utf-8")
+    return active_task
+
+
+def _force_task_to_done_with_valid_audit(task_dir: Path) -> None:
+    _fill_spec_with_five_sections(task_dir)
+    task_md = task_dir / "task.md"
+    content = task_md.read_text(encoding="utf-8")
+    content = content.replace("status: draft", "status: done")
+    content = content.replace(
+        "status_history:\n  - draft\n",
+        "status_history:\n  - draft\n  - planned\n  - red\n  - green\n"
+        "  - in_review\n  - ready_to_merge\n  - done\n",
+    )
+    content = content.replace("current_review_round: 0", "current_review_round: 1")
+    task_md.write_text(content, encoding="utf-8")
+    review_dir = task_dir / "review"
+    review_dir.mkdir(exist_ok=True)
+    (review_dir / "code-review-round-001.md").write_text(
+        "# Code Review Round 001\n\n## Context\n- Doctor stale active-task test\n\n## Findings\n- None\n",
+        encoding="utf-8",
+    )
+    (review_dir / "code-review-round-001.resolved.md").write_text(
+        "# Resolved Code Review Round 001\n\n## Fixes\n- Nothing to fix\n\n## Verification\n- pytest\n",
+        encoding="utf-8",
+    )
+    evidence = task_dir / "verification" / "cli" / "result.md"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text(
+        "# Verification\n- Command: pytest tests/test_doctor_command.py\n- Stdout: focused stale active task diagnostics exercised\n",
+        encoding="utf-8",
+    )
+
+
 # ---------- Tests ----------
+
+
+def test_doctor_help_mentions_active_task_diagnostics(tmp_path: Path) -> None:
+    result = _run(["doctor", "--help"], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "active-task" in result.stdout
+
 
 
 def test_detects_zombie_task(tmp_path: Path) -> None:
@@ -206,6 +251,69 @@ def test_done_task_is_not_zombie(tmp_path: Path) -> None:
         if "TASK-001-demo-task" in line and "zombie" in line.lower()
     ]
     assert zombie_lines == [], r.stdout
+
+
+def test_detects_active_task_pointing_at_done_task(tmp_path: Path) -> None:
+    project_dir, slug = _make_fresh_project(tmp_path)
+    task_dir = _task_md_path(
+        project_dir, slug, "sprint-001-foundation", "TASK-001-demo-task"
+    ).parent
+    _force_task_to_done_with_valid_audit(task_dir)
+    _write_active_task(project_dir, str(task_dir))
+
+    r = _doctor(project_dir, slug)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    output = r.stdout.lower()
+    assert "active-task" in output
+    assert "TASK-001-demo-task" in r.stdout
+    assert "done" in output
+    assert "stale" in output or "terminal" in output
+
+
+def test_detects_active_task_pointing_at_missing_task(tmp_path: Path) -> None:
+    project_dir, slug = _make_fresh_project(tmp_path)
+    missing_task_dir = (
+        project_dir
+        / ".theking"
+        / "workflows"
+        / slug
+        / "sprints"
+        / "sprint-001-foundation"
+        / "tasks"
+        / "TASK-999-missing-task"
+    )
+    _write_active_task(project_dir, str(missing_task_dir))
+
+    r = _doctor(project_dir, slug)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    output = r.stdout.lower()
+    assert "active-task" in output
+    assert "TASK-999-missing-task" in r.stdout
+    assert "missing" in output or "non-existent" in output
+
+
+def test_active_task_diagnostic_is_warning_only(tmp_path: Path) -> None:
+    project_dir, slug = _make_fresh_project(tmp_path)
+    task_dir = _task_md_path(
+        project_dir, slug, "sprint-001-foundation", "TASK-001-demo-task"
+    ).parent
+    _force_task_to_done_with_valid_audit(task_dir)
+    _write_active_task(project_dir, str(task_dir))
+
+    r = _doctor(project_dir, slug, "--json")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    data = json.loads(r.stdout)
+    assert data["errors"] == []
+    recovery_findings = [
+        finding
+        for bucket_name in ("warnings", "info")
+        for finding in data[bucket_name]
+        if "active-task" in finding["message"].lower()
+    ]
+    assert recovery_findings, data
 
 
 def test_detects_stale_decree_checkpoint(tmp_path: Path) -> None:
