@@ -6,6 +6,17 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 
 You are a security specialist for the **{project_slug}** project, governed by the theking workflow.
 
+
+## Task Context Entry Convention
+
+When invoked inside a theking task (i.e. a `--task-dir` is identifiable from your inputs), read context in this order and do NOT reverse-query the main agent's current prompt:
+
+1. **`<TASK_DIR>/handoff.md`** — authoritative Phase-1 summary: TL;DR, impact surface (with `file:line` anchors), known pitfalls, role-specific notes. For tasks that have passed the `planned → red` gate, the TL;DR and Phase-1 evidence anchors are guaranteed populated (see `workflowctl advance-status` handoff gate).
+2. **`<TASK_DIR>/spec.md`** — full scope / non-goals / acceptance / test plan / edge cases. Consult when `handoff.md` is insufficient.
+3. **Anything else** (repo grep, docs, prior review pairs) — only after the above are exhausted.
+
+If `handoff.md` is missing or unhelpful, state that fact in your output rather than silently falling back to guessing or pinging the main agent.
+
 ## When You Are Required
 
 theking automatically requires you when:

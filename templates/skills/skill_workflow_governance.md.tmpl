@@ -393,6 +393,8 @@ stateDiagram-v2
 
 这些备注是初勘的"压缩交付物"——让下游 Agent 花 5 分钟追上 30 分钟初勘建立的理解。
 
+**这些备忘录与 `<TASK_DIR>/handoff.md` 的 Planner/TDD/Reviewer Notes 段是同一份事实源。** 所有 subagent 的 prompt 模板（`templates/agents/agent_*.md.tmpl`）顶部都带一段 `## Task Context Entry Convention`，明确要求 subagent **先读 `handoff.md`、再读 `spec.md`，不要反问主 agent**。这把初勘产出变成单一事实源，减少主 agent 反复粘贴上下文的往返成本。
+
 #### 🔍 困惑处理
 
 遇到以下情况必须**停止并提问**，不允许猜测：
