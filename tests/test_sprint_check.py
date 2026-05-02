@@ -129,12 +129,15 @@ def advance_task_to_done(task_dir: Path, cwd: Path) -> None:
 
 
 def verification_result_markdown() -> str:
+    # sprint-017 TASK-001: shape gate requires profile-specific anchors.
+    # Default fixture used for backend.cli: Command: + Exit: pair.
     return "\n".join(
         [
             "# Verification Result",
             "",
             "- Command: uv run --with pytest pytest tests -q",
             "- Outcome: passed",
+            "- Exit: 0",
             "",
         ]
     )

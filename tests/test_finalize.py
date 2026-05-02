@@ -206,11 +206,17 @@ def write_review_pair(task_dir: Path, round_number: int = 1) -> None:
 
 
 def seed_verification_evidence(task_dir: Path) -> None:
-    """Seed substantive verification evidence (>= 40 chars) for the CLI profile."""
+    """Seed substantive verification evidence (>= 40 chars) for the CLI profile.
+
+    sprint-017 TASK-001: also carries the backend.cli shape-gate anchors
+    (Command: + Exit:) so the task can advance past ready_to_merge/done.
+    """
     evidence = task_dir / "verification" / "cli" / "test.log"
     evidence.parent.mkdir(parents=True, exist_ok=True)
     evidence.write_text(
-        "pytest run ok: happy path passes, error path passes, regression clean\n",
+        "$ uv run --with pytest pytest tests -q\n"
+        "pytest run ok: happy path passes, error path passes, regression clean\n"
+        "Exit: 0\n",
         encoding="utf-8",
     )
 

@@ -122,8 +122,12 @@ def _advance(tmp_path: Path, task_dir: Path, to: str) -> None:
         # Must carry >= 40 substantive chars to satisfy ADR-003 gate; a
         # bare "pytest run ok" (12 chars) is now rejected by the
         # substantive-evidence check in validate_verification_layout.
+        # sprint-017 TASK-001: also add $ + Exit: so the per-profile
+        # shape gate accepts the file as real backend.cli evidence.
         evidence.write_text(
-            "pytest run ok: happy path passes, error path passes, regression clean\n",
+            "$ uv run --with pytest pytest tests -q\n"
+            "pytest run ok: happy path passes, error path passes, regression clean\n"
+            "Exit: 0\n",
             encoding="utf-8",
         )
     r = run_cli(

@@ -791,6 +791,236 @@ def has_substantive_verification_evidence(profile_dir: Path) -> bool:
     return False
 
 
+# --- Per-profile evidence schema gate (sprint-017 TASK-001) -----------------
+#
+# ``has_substantive_verification_evidence`` only measures substantive
+# character count. It keeps out pure placeholders but accepts "40 characters
+# of prose with no actual command or HTTP status line". This sibling gate
+# demands that the evidence carry profile-specific semantic anchors so a
+# reviewer (human or LLM) can tell what was actually exercised.
+#
+# Same stance as ADR-001 / ADR-003: no opt-out, clear error messages.
+
+PROFILE_SCHEMA_MIN_BINARY_BYTES = 512
+
+# Magic-byte prefixes for binary artifacts accepted by web.browser shape
+# gate. Extension fallback is NOT used — a ".png" with wrong magic bytes
+# would let anyone "trick" the gate by renaming a text file.
+_WEB_BROWSER_MAGIC_BYTES: tuple[bytes, ...] = (
+    b"\x89PNG\r\n\x1a\n",                # PNG
+    b"\xff\xd8\xff",                      # JPEG (any variant starts with FFD8FF)
+    b"\x1a\x45\xdf\xa3",                  # WebM / Matroska (EBML header)
+    b"%PDF-",                             # PDF
+    b"PK\x03\x04",                        # ZIP (playwright trace)
+    b"\x00\x00\x00\x18ftypmp4",           # MP4 (partial; enough for smoke)
+    b"\x00\x00\x00\x20ftypmp4",           # MP4 variant
+    b"\x00\x00\x00\x1cftyp",              # MP4 isobmff generic
+    b"GIF87a",                            # GIF87
+    b"GIF89a",                            # GIF89
+)
+
+
+def _is_accepted_browser_binary(path: Path) -> bool:
+    """True iff ``path`` is a real binary artifact above the size floor.
+
+    Extension alone is insufficient (attacker could rename a text file).
+    We read the first 16 bytes and match against known magic-byte prefixes.
+    """
+    try:
+        if path.stat().st_size < PROFILE_SCHEMA_MIN_BINARY_BYTES:
+            return False
+        with path.open("rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return False
+    return any(head.startswith(sig) for sig in _WEB_BROWSER_MAGIC_BYTES)
+
+
+def _strip_html_comments(text: str) -> str:
+    """Drop HTML comments so anchors inside comments do not count.
+
+    Mirrors ``substantive_text_length``'s stripping. Without this an agent
+    could paste `<!-- Command: fake --><!-- Exit: 0 -->` and pass the
+    gate trivially.
+    """
+    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+
+
+def _collect_profile_text(profile_dir: Path) -> str:
+    """Concatenate UTF-8 readable evidence text across the profile dir,
+    with HTML comments stripped. Binary files are ignored.
+    """
+    chunks: list[str] = []
+    for artifact in sorted(profile_dir.rglob("*"), key=lambda p: p.as_posix()):
+        if artifact.is_symlink() or not artifact.is_file():
+            continue
+        try:
+            text = artifact.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        chunks.append(_strip_html_comments(text))
+    return "\n".join(chunks)
+
+
+# Anchor regexes — deliberately boring. Case-insensitive where a human
+# might vary casing. Line-anchored where placement matters. Leading
+# bullet / checkbox markers (``-`` / ``*`` / ``1.``) are tolerated so
+# agents can write evidence as a normal markdown list.
+_LINE_PREFIX = r"(?:[-*+]\s+|\d+[.)]\s+|\[[ xX]\]\s+)?"
+
+_CLI_COMMAND_ANCHOR = re.compile(
+    r"(?im)^\s*" + _LINE_PREFIX + r"(?:\$\s+\S|>\s+\S|Command\s*:)",
+    re.MULTILINE,
+)
+_CLI_EXIT_ANCHOR = re.compile(
+    r"(?i)\b(?:exit(?:\s+code)?\s*[:=]?\s*\d+|exit\s*:\s*\d+|returncode\s*[:=]?\s*\d+|status\s*:\s*\d+)\b"
+)
+
+_HTTP_METHOD_ANCHOR = re.compile(
+    r"(?m)^\s*" + _LINE_PREFIX + r"(?:[<>]\s*)?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+\S"
+)
+_HTTP_STATUS_ANCHOR = re.compile(
+    r"(?mi)(?:HTTP/\d(?:\.\d)?\s+(?P<s1>\d{3})\b|^\s*" + _LINE_PREFIX + r"(?:[<>]\s*)?(?:status(?:\s+code)?|HTTP\s+status)\s*[:=]?\s*(?P<s2>\d{3})\b)"
+)
+
+_JOB_START_ANCHOR = re.compile(
+    r"(?i)\b(?:ran|started|starting|invoked|invoking|launched|began)\b"
+)
+_JOB_DONE_ANCHOR = re.compile(
+    r"(?i)\b(?:completed|finished|done|succeeded)\b"
+)
+
+_MD_IMAGE_REF = re.compile(r"!\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+
+
+def _profile_shape_error(profile: str, missing: str) -> WorkflowError:
+    return WorkflowError(
+        f"Evidence shape gate failed for profile {profile!r}: {missing}. "
+        "Evidence must carry the semantic anchors the profile expects. "
+        "See validate_profile_evidence_shape docstring for the full "
+        "anchor catalogue. No --skip flag is available; paste the missing "
+        "anchor(s) into the evidence file."
+    )
+
+
+def validate_profile_evidence_shape(profile_dir: Path, profile_name: str) -> None:
+    """Enforce per-profile semantic anchors on evidence files.
+
+    Anchor catalogue:
+
+    - **backend.cli**: a command anchor (``$ cmd``, ``> cmd``, or
+      ``Command:`` prefix) AND an exit anchor (``Exit:``, ``exit code``,
+      ``returncode``, or ``Status:`` with a number).
+    - **backend.http**: an HTTP method verb line (``GET``/``POST``/``PUT``/
+      ``DELETE``/``PATCH``/``HEAD``/``OPTIONS`` at line start, optionally
+      after ``<``/``>`` for curl-verbose output) AND a 3-digit status code
+      (either ``HTTP/1.1 200 OK`` or ``status: 200``).
+    - **backend.job**: a start anchor (``ran``/``started``/``invoked``/
+      ``launched``) AND a completion anchor (``completed``/``finished``/
+      ``done``/``succeeded``).
+    - **web.browser**: at least one binary artifact of a recognised media
+      type (PNG/JPEG/WebM/MP4/PDF/ZIP/GIF) at least
+      ``PROFILE_SCHEMA_MIN_BINARY_BYTES`` in size, OR a markdown image
+      reference ``![alt](path)`` whose target resolves relative to the
+      markdown file and meets the same magic-byte + size bar.
+
+    HTML comments are stripped before matching so anchors inside comments
+    do not count. Unknown profiles are a no-op (forward compat).
+    """
+    profile_key = profile_name.strip()
+    if profile_key not in {"backend.cli", "backend.http", "backend.job", "web.browser"}:
+        return  # unknown profile — forward compat, no-op
+
+    if profile_key == "web.browser":
+        _validate_web_browser_shape(profile_dir)
+        return
+
+    text = _collect_profile_text(profile_dir)
+
+    if profile_key == "backend.cli":
+        if not _CLI_COMMAND_ANCHOR.search(text):
+            raise _profile_shape_error(
+                profile_key,
+                "missing command anchor "
+                "('$ <cmd>', '> <cmd>', or 'Command:' at line start)",
+            )
+        if not _CLI_EXIT_ANCHOR.search(text):
+            raise _profile_shape_error(
+                profile_key,
+                "missing exit/status anchor "
+                "('Exit: 0' / 'exit code 0' / 'returncode: 0' / 'Status: 0')",
+            )
+        return
+
+    if profile_key == "backend.http":
+        if not _HTTP_METHOD_ANCHOR.search(text):
+            raise _profile_shape_error(
+                profile_key,
+                "missing HTTP method anchor "
+                "(GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS at line start)",
+            )
+        if not _HTTP_STATUS_ANCHOR.search(text):
+            raise _profile_shape_error(
+                profile_key,
+                "missing HTTP status anchor "
+                "('HTTP/1.1 200 OK' or 'status: 200')",
+            )
+        return
+
+    if profile_key == "backend.job":
+        if not _JOB_START_ANCHOR.search(text):
+            raise _profile_shape_error(
+                profile_key,
+                "missing job start anchor "
+                "(ran/started/invoked/launched/began)",
+            )
+        if not _JOB_DONE_ANCHOR.search(text):
+            raise _profile_shape_error(
+                profile_key,
+                "missing job completion anchor "
+                "(completed/finished/done/succeeded)",
+            )
+        return
+
+
+def _validate_web_browser_shape(profile_dir: Path) -> None:
+    """Require a real binary artifact OR a markdown reference that
+    resolves to one, above the size + magic-byte bar."""
+
+    # 1) Any direct binary artifact of the right size + magic bytes?
+    for artifact in sorted(profile_dir.rglob("*"), key=lambda p: p.as_posix()):
+        if artifact.is_symlink() or not artifact.is_file():
+            continue
+        if _is_accepted_browser_binary(artifact):
+            return
+
+    # 2) Fall back to markdown references that point at real files.
+    for md_file in sorted(profile_dir.rglob("*.md"), key=lambda p: p.as_posix()):
+        if md_file.is_symlink() or not md_file.is_file():
+            continue
+        try:
+            text = md_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for ref in _MD_IMAGE_REF.findall(_strip_html_comments(text)):
+            ref_path = (md_file.parent / ref).resolve()
+            # Confine to profile_dir to prevent ../../system-file tricks.
+            try:
+                ref_path.relative_to(profile_dir.resolve())
+            except ValueError:
+                continue
+            if _is_accepted_browser_binary(ref_path):
+                return
+
+    raise _profile_shape_error(
+        "web.browser",
+        "missing binary artifact (>= "
+        f"{PROFILE_SCHEMA_MIN_BINARY_BYTES}B, recognised media type: "
+        "png/jpeg/webm/mp4/pdf/zip/gif) and no markdown image reference "
+        "resolves to such a file under the profile dir",
+    )
+
+
 AGENT_RUN_LEDGER_REQUIRED_FIELDS: frozenset[str] = frozenset(
     {
         "timestamp",
@@ -1046,6 +1276,12 @@ def validate_verification_layout(verification_dir: Path, task_data: dict[str, An
                 "not just placeholder tokens like 'TODO' / '待补' or empty HTML comments) "
                 f"before {status}: {profile_dir.name}"
             )
+        if status in {"ready_to_merge", "done"}:
+            # Shape gate runs AFTER substantive-chars gate: if the dir is
+            # structurally empty, the above error already fires. Only when
+            # there's actual evidence do we then demand the right anchors
+            # for the profile. Unknown profiles (forward compat) no-op.
+            validate_profile_evidence_shape(profile_dir, normalized)
 
 
 def validate_review_requirements(review_dir: Path, task_data: dict[str, Any]) -> None:
