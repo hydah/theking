@@ -24,4 +24,28 @@
 {test_plan}
 
 ## Edge Cases
-<!-- List boundary conditions, error scenarios, and unusual inputs to handle. -->
+<!-- sprint-017 TASK-003: Edge Cases supports two structures.
+
+  Preferred (new): split into two subsections so the adversarial-inputs
+  discipline from tdd-guide ('enumerate failure categories, cover many')
+  becomes machine-enforced. Full flow requires >= 2 Failure modes and
+  >= 1 Happy variant; lightweight requires >= 1 Failure mode.
+
+  Legacy (still accepted): a flat bullet list under '## Edge Cases'
+  with no '###' subsections. Uses the aggregate threshold (full >= 3,
+  lightweight >= 1).
+
+  Mixing both forms (top-level bullets AND subsection headers) is
+  rejected; pick one structure.
+
+  List boundary conditions, error scenarios, and unusual inputs to handle. -->
+
+### Failure modes
+<!-- Inputs / conditions under which the change SHOULD break or reject.
+     Null / boundary / concurrency / ordering / encoding categories
+     are typical starting points. -->
+
+### Happy variants
+<!-- Non-canonical but still-expected-to-succeed input shapes. Often
+     the tests discover these when thinking about what the feature
+     should tolerate. -->

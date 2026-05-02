@@ -353,6 +353,20 @@ SPEC_SECTION_COUNT_THRESHOLDS_MECHANICAL: dict[str, int] = {
 }
 ALLOWED_TASK_FLOWS = {"full", "lightweight", "mechanical"}
 
+# sprint-017 TASK-003: when Edge Cases is split into subsections, apply
+# per-subsection thresholds instead of the flat aggregate. Full flow
+# demands at least 2 Failure modes + 1 Happy variant; lightweight
+# requires 1 Failure mode (Happy variants not enforced). Mechanical
+# still skips.
+SPEC_EDGE_CASES_SUBSECTION_THRESHOLDS_FULL: dict[str, int] = {
+    "Failure modes": 2,
+    "Happy variants": 1,
+}
+SPEC_EDGE_CASES_SUBSECTION_THRESHOLDS_LIGHT: dict[str, int] = {
+    "Failure modes": 1,
+    "Happy variants": 0,
+}
+
 
 def normalize_task_flow(value: Any) -> str:
     """Normalize the task.md 'flow' frontmatter field. Missing -> 'full'."""
@@ -392,11 +406,25 @@ def count_spec_section_items(section_body: str) -> int:
     return count
 
 
+_EDGE_CASES_SUBSECTION_HEADERS = {
+    # Canonical name -> accepted variants (case-insensitive)
+    "Failure modes": ("Failure modes", "failure modes", "FAILURE MODES", "Failure Modes"),
+    "Happy variants": ("Happy variants", "happy variants", "HAPPY VARIANTS", "Happy Variants"),
+}
+
+
 def validate_spec_section_counts(spec_md: Path, *, flow: str) -> None:
     """Enforce per-flow minimum item counts on content-carrying spec sections.
 
     Legacy spec structure (only Acceptance + Test Plan) is preserved as a
     bypass to match `validate_spec`'s backward-compat contract.
+
+    sprint-017 TASK-003: Edge Cases can be split into '### Failure modes'
+    and '### Happy variants' subsections. When the new structure is
+    detected, per-subsection thresholds apply. Flat bullets and
+    subsection headings cannot coexist — that's a "pick one form"
+    error. Legacy flat Edge Cases continue to use the aggregate
+    threshold, unchanged.
     """
     flow = normalize_task_flow(flow)
     spec_text = spec_md.read_text(encoding="utf-8")
@@ -413,6 +441,11 @@ def validate_spec_section_counts(spec_md: Path, *, flow: str) -> None:
     )
     for heading, minimum in thresholds.items():
         section_body = sections.get(heading, "")
+
+        if heading == "Edge Cases":
+            _validate_edge_cases_subsections_or_flat(section_body, flow, minimum)
+            continue
+
         observed = count_spec_section_items(section_body)
         if observed < minimum:
             raise WorkflowError(
@@ -420,6 +453,79 @@ def validate_spec_section_counts(spec_md: Path, *, flow: str) -> None:
                 f"{flow} flow requires >= {minimum}. "
                 "Either add more items, or switch this task to lightweight "
                 "flow by setting `flow: lightweight` in task.md frontmatter."
+            )
+
+
+def _validate_edge_cases_subsections_or_flat(
+    body: str, flow: str, legacy_minimum: int
+) -> None:
+    """Dispatch to subsection-aware thresholds when '### Failure modes'
+    / '### Happy variants' are present, else fall back to the flat
+    aggregate threshold."""
+    # Parse once.
+    lines = body.splitlines()
+    has_failure_header = False
+    has_happy_header = False
+    current: str | None = None
+    top_level_buf: list[str] = []
+    sub_buf: dict[str, list[str]] = {"Failure modes": [], "Happy variants": []}
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("### "):
+            header = stripped[4:].strip().lower()
+            if header == "failure modes":
+                has_failure_header = True
+                current = "Failure modes"
+                continue
+            if header == "happy variants":
+                has_happy_header = True
+                current = "Happy variants"
+                continue
+            current = None  # unknown subsection — skip into nowhere
+            continue
+        if current is None:
+            top_level_buf.append(line)
+        else:
+            sub_buf[current].append(line)
+
+    has_any_subsection = has_failure_header or has_happy_header
+    if not has_any_subsection:
+        # Legacy flat form — use the aggregate count as before.
+        observed = count_spec_section_items(body)
+        if observed < legacy_minimum:
+            raise WorkflowError(
+                f"spec.md 'Edge Cases' has {observed} item(s); "
+                f"{flow} flow requires >= {legacy_minimum}. "
+                "Either add more items, or switch this task to lightweight "
+                "flow by setting `flow: lightweight` in task.md frontmatter."
+            )
+        return
+
+    # Subsection form — reject mixed flat + subsection structure.
+    top_level_has_bullets = count_spec_section_items("\n".join(top_level_buf)) >= 1
+    if top_level_has_bullets:
+        raise WorkflowError(
+            "spec.md 'Edge Cases' mixes top-level bullets with '### Failure "
+            "modes' / '### Happy variants' subsections. Pick one structure: "
+            "either delete the subsection headers and list all items as flat "
+            "bullets (legacy form, aggregate threshold), OR move every bullet "
+            "under a subsection header (new form, per-subsection thresholds)."
+        )
+
+    subsection_thresholds = (
+        SPEC_EDGE_CASES_SUBSECTION_THRESHOLDS_FULL
+        if flow == "full"
+        else SPEC_EDGE_CASES_SUBSECTION_THRESHOLDS_LIGHT
+    )
+    for sub_name, minimum in subsection_thresholds.items():
+        observed = count_spec_section_items("\n".join(sub_buf[sub_name]))
+        if observed < minimum:
+            raise WorkflowError(
+                f"spec.md 'Edge Cases / {sub_name}' has {observed} item(s); "
+                f"{flow} flow requires >= {minimum}. "
+                "Either add more items under that subsection, or switch "
+                "this task to lightweight flow by setting "
+                "`flow: lightweight` in task.md frontmatter."
             )
 
 
