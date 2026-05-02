@@ -306,6 +306,13 @@ def test_web_browser_accepts_webm_and_mp4_and_pdf(tmp_path: Path) -> None:
     validate_profile_evidence_shape(tmp_path, "web.browser")
 
 
+def test_web_browser_accepts_webp(tmp_path: Path) -> None:
+    # WebP: "RIFF" + 4-byte size + "WEBP" + VP8 chunk (omitted here).
+    payload = b"RIFF" + (1024).to_bytes(4, "little") + b"WEBP" + b"\x00" * 1024
+    (tmp_path / "screenshot.webp").write_bytes(payload)
+    validate_profile_evidence_shape(tmp_path, "web.browser")
+
+
 # ---------------------------------------------------------------------------
 # error message quality
 # ---------------------------------------------------------------------------

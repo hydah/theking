@@ -817,6 +817,9 @@ _WEB_BROWSER_MAGIC_BYTES: tuple[bytes, ...] = (
     b"\x00\x00\x00\x1cftyp",              # MP4 isobmff generic
     b"GIF87a",                            # GIF87
     b"GIF89a",                            # GIF89
+    # "RIFF????WEBP" — WebP is RIFF/WAVE-style: first 4 bytes RIFF, then
+    # 4 size bytes, then WEBP. We only match the RIFF header + WEBP marker
+    # at offset 8 via a custom check in _is_accepted_browser_binary.
 )
 
 
@@ -825,6 +828,8 @@ def _is_accepted_browser_binary(path: Path) -> bool:
 
     Extension alone is insufficient (attacker could rename a text file).
     We read the first 16 bytes and match against known magic-byte prefixes.
+    WebP (RIFF/WEBP) needs a two-window check because size bytes sit
+    between the RIFF header and the WEBP marker.
     """
     try:
         if path.stat().st_size < PROFILE_SCHEMA_MIN_BINARY_BYTES:
@@ -833,7 +838,12 @@ def _is_accepted_browser_binary(path: Path) -> bool:
             head = fh.read(16)
     except OSError:
         return False
-    return any(head.startswith(sig) for sig in _WEB_BROWSER_MAGIC_BYTES)
+    if any(head.startswith(sig) for sig in _WEB_BROWSER_MAGIC_BYTES):
+        return True
+    # WebP: "RIFF" + 4-byte size + "WEBP"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return True
+    return False
 
 
 def _strip_html_comments(text: str) -> str:
