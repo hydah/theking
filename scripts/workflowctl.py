@@ -1027,6 +1027,13 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
         raise WorkflowError(f"{header}\n  - {bullets}")
 
     created_dirs: list[Path] = []
+    # sprint-019 TASK-001: every task in one init-sprint-plan invocation
+    # shares a single created_at timestamp. This gives the audit ledger
+    # a single atomic "sprint was initialized" event instead of N events
+    # scattered across sub-second timestamps.
+    from datetime import datetime, timezone as _tz
+
+    shared_created_at = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         for entry in prepared_entries:
             task_id = entry["task_id"]
@@ -1055,6 +1062,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 spec_hints=entry.get("spec_hints") or None,
                 bundle=bundle_map.get(entry["_slug"]) if bundle_map else None,
                 review_mode=entry.get("review_mode", "light"),
+                created_at=shared_created_at,
             )
 
         update_sprint_overview(sprint_dir / "sprint.md")

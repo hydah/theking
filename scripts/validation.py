@@ -22,6 +22,7 @@ try:
         MAX_BUNDLE_SIZE,
         SPRINT_NAME_PATTERN,
         TASK_ID_PATTERN,
+        TASK_SCHEMA_VERSION,
         THEKING_DIRNAME,
         WorkflowError,
     )
@@ -38,6 +39,7 @@ except ImportError:
         MAX_BUNDLE_SIZE,
         SPRINT_NAME_PATTERN,
         TASK_ID_PATTERN,
+        TASK_SCHEMA_VERSION,
         THEKING_DIRNAME,
         WorkflowError,
     )
@@ -331,6 +333,16 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
         execution_profile,
     )
 
+    # sprint-019 TASK-001: optional schema-versioning fields. Validated
+    # only when present; absence is treated as "legacy task" by
+    # is_new_theking_task() downstream.
+    schema_version = task_data.get("theking_schema_version")
+    if schema_version is not None:
+        _validate_theking_schema_version(schema_version)
+    created_at = task_data.get("created_at")
+    if created_at is not None:
+        _validate_task_created_at(created_at)
+
     return {
         **task_data,
         "id": task_id,
@@ -338,6 +350,69 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
         "execution_profile": execution_profile,
         "review_mode": review_mode,
     }
+
+
+def _validate_theking_schema_version(value: Any) -> None:
+    """sprint-019 TASK-001: theking_schema_version must be a positive int.
+
+    Strings (e.g. 'v1'), zero, and negatives are rejected. Future-version
+    integers (e.g. 99) are accepted for forward compatibility — a task
+    created by a newer theking is still 'new'.
+    """
+    if type(value) is not int or isinstance(value, bool):
+        raise WorkflowError(
+            f"theking_schema_version must be a positive integer "
+            f"(got {value!r} of type {type(value).__name__})"
+        )
+    if value < 1:
+        raise WorkflowError(
+            f"theking_schema_version must be >= 1 (got {value})"
+        )
+
+
+def _validate_task_created_at(value: Any) -> None:
+    """sprint-019 TASK-001: created_at must be a non-empty ISO8601 UTC
+    timestamp (suffix 'Z' or '+00:00').
+
+    We do not allow naive / local-timezone timestamps because audit
+    ledgers reconstruct event order across machines — ambiguous
+    timezones defeat the point.
+    """
+    from datetime import datetime as _dt
+
+    if not isinstance(value, str):
+        raise WorkflowError(
+            f"created_at must be a string (got {type(value).__name__})"
+        )
+    if not value.strip():
+        raise WorkflowError("created_at must not be empty")
+    if not (value.endswith("Z") or "+00:00" in value or "-00:00" in value):
+        raise WorkflowError(
+            f"created_at must be UTC ISO8601 ending in 'Z' or '+00:00' "
+            f"(got {value!r})"
+        )
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        _dt.fromisoformat(normalized)
+    except ValueError as error:
+        raise WorkflowError(
+            f"created_at is not a parseable ISO8601 timestamp: {value!r}"
+        ) from error
+
+
+def is_new_theking_task(task_data: dict[str, Any]) -> bool:
+    """Return True iff this task carries the sprint-019 schema-version
+    field, indicating it was created under the post-sprint-019 governance
+    regime. Legacy tasks (no field) retain backward-compat silent-pass
+    behavior; new tasks get strict gates.
+
+    A field value of None (explicit null in YAML) is treated as absent.
+    Any positive integer means 'new' — forward-compat for future bumps.
+    """
+    value = task_data.get("theking_schema_version")
+    if value is None:
+        return False
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
 
 
 SPEC_SECTION_COUNT_THRESHOLDS_FULL: dict[str, int] = {
@@ -2321,6 +2396,15 @@ def serialize_task_frontmatter(task_data: dict[str, Any]) -> str:
         bundle_str = stringify(task_data["bundle"]).strip()
         if bundle_str:
             lines.append(f"bundle: {bundle_str}")
+    # sprint-019 TASK-001: preserve optional schema-versioning fields.
+    # Without this, every status transition silently strips them and
+    # new tasks would look legacy after the first advance-status call.
+    if task_data.get("created_at") is not None:
+        created_at_str = stringify(task_data["created_at"]).strip()
+        if created_at_str:
+            lines.append(f"created_at: {created_at_str}")
+    if task_data.get("theking_schema_version") is not None:
+        lines.append(f"theking_schema_version: {int(task_data['theking_schema_version'])}")
     lines.append("---")
     return "\n".join(lines)
 

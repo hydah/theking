@@ -75,6 +75,13 @@ EXECUTION_PROFILE_DIRS = {
 }
 
 
+# sprint-019 TASK-001: task.md schema versioning. Bumped when a new
+# required frontmatter field is introduced that changes the discriminator
+# for "new theking task" vs "legacy task". Starts at 1 when sprint-019
+# lands; future bumps require an ADR + migration strategy.
+TASK_SCHEMA_VERSION = 1
+
+
 class WorkflowError(Exception):
     pass
 

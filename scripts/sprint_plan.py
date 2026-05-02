@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from .constants import MAX_BUNDLE_SIZE, TASK_ID_PATTERN, WorkflowError
+    from .constants import MAX_BUNDLE_SIZE, TASK_ID_PATTERN, TASK_SCHEMA_VERSION, WorkflowError
     from .validation import (
         check_dag,
         default_test_plan,
@@ -25,7 +25,7 @@ try:
         stringify,
     )
 except ImportError:
-    from constants import MAX_BUNDLE_SIZE, TASK_ID_PATTERN, WorkflowError
+    from constants import MAX_BUNDLE_SIZE, TASK_ID_PATTERN, TASK_SCHEMA_VERSION, WorkflowError
     from validation import (
         check_dag,
         default_test_plan,
@@ -417,8 +417,24 @@ def write_task_files(
     spec_hints: dict[str, list[str]] | None = None,
     bundle: str | None = None,
     review_mode: str = "light",
+    created_at: str | None = None,
+    theking_schema_version: int | None = None,
 ) -> None:
-    """Write task.md, spec.md, and optional audit/context artifacts."""
+    """Write task.md, spec.md, and optional audit/context artifacts.
+
+    sprint-019 TASK-001: created_at and theking_schema_version default
+    to current UTC / TASK_SCHEMA_VERSION when not supplied. Callers
+    that want a deterministic timestamp (e.g. init-sprint-plan batching)
+    should pass a shared created_at so every task in the same CLI
+    invocation gets the exact same value.
+    """
+    from datetime import datetime, timezone
+
+    if created_at is None:
+        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if theking_schema_version is None:
+        theking_schema_version = TASK_SCHEMA_VERSION
+
     depends_on_block = (
         "\n".join(f"  - {dep}" for dep in depends_on)
         if depends_on
@@ -439,6 +455,8 @@ def write_task_files(
             depends_on_block=depends_on_block,
             bundle_block=bundle_block,
             review_mode=review_mode,
+            created_at=created_at,
+            theking_schema_version=theking_schema_version,
         ),
         encoding="utf-8",
     )
