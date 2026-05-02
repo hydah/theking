@@ -431,6 +431,10 @@ def test_cli_does_not_invoke_gate_on_non_planned_to_red_transition(
 
     # Fill spec so planned->green does not fail for section-count reasons.
     (task_dir / "spec.md").write_text(COMPLETE_SPEC, encoding="utf-8")
+    # sprint-015 TASK-001: draft-exit Goal gate.
+    from conftest import populate_task_goal
+
+    populate_task_goal(task_dir / "task.md")
 
     # Deliberately leave handoff.md empty of file:line refs. If the gate
     # fires on planned->green, this file would cause a rejection.

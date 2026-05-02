@@ -151,6 +151,10 @@ def test_workflowctl_console_script_runs_minimal_task_workflow(tmp_path: Path) -
         "--task-dir",
         str(task_dir),
     ])
+    # sprint-015 TASK-001: draft-exit Goal gate.
+    from conftest import populate_task_goal
+
+    populate_task_goal(task_dir / "task.md")
     planned_result = run_console_cli([
         "advance-status",
         "--task-dir",

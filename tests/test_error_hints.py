@@ -108,6 +108,10 @@ def bootstrap_sprint_with_task(tmp_path: Path) -> Path:
         / "TASK-001-demo-task"
     )
     (task_dir / "spec.md").write_text(SPEC_CONTENT, encoding="utf-8")
+    # sprint-015 TASK-001: draft-exit Goal gate.
+    from conftest import populate_task_goal
+
+    populate_task_goal(task_dir / "task.md")
     return task_dir
 
 

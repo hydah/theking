@@ -85,6 +85,7 @@ try:
         validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
+        validate_task_goal,
         validate_handoff_evidence_anchors,
         write_if_missing,
         write_task_document,
@@ -166,6 +167,7 @@ except ImportError:
         validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
+        validate_task_goal,
         validate_handoff_evidence_anchors,
         write_if_missing,
         write_task_document,
@@ -778,6 +780,14 @@ def handle_advance_status(args: argparse.Namespace) -> None:
     task_data, body = load_task_document(task_md)
 
     requested_status = args.to_status.strip()
+
+    # sprint-015 TASK-001: Goal gate. A task cannot leave draft with a
+    # placeholder/empty ## Goal section. Fires only on the draft-exit
+    # transition so fresh drafts can still be inspected with `check` and
+    # `activate` before the author fills the Goal.
+    if stringify(task_data["status"]) == "draft" and requested_status != "draft":
+        validate_task_goal(task_md)
+
     if requested_status == "in_review":
         current_status = stringify(task_data["status"])
         if current_status != "blocked" or infer_blocked_resume_status([stringify(entry) for entry in task_data["status_history"]]) != "in_review":

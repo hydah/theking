@@ -122,7 +122,58 @@ def derive_task_paths(task_dir: Path) -> TaskPaths:
     )
 
 
-def validate_task_dir(task_dir: Path) -> None:
+# --- task.md Goal gate (sprint-015 TASK-001) --------------------------------
+#
+# Why a gate here rather than only in doctor: doctor's zombie-task detection
+# (D1) catches empty Goal only *after* a task has already advanced. sprint-014
+# demonstrated the hole — two tasks reached `done` with placeholder Goals
+# because nothing rejected them at draft exit. The canonical check lives here
+# in validation.py so both `workflowctl check` and `advance-status` enforce
+# it. doctor.py imports the helpers to avoid drift between the two gates.
+
+_GOAL_PLACEHOLDER_MARKER = "Describe the expected OUTCOME"
+
+
+def goal_body_is_placeholder(body: str) -> bool:
+    """Return True if the Goal body is structurally empty — only HTML comments,
+    blank lines, or whitespace. A human has written nothing."""
+    stripped = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
+    return not stripped
+
+
+def goal_is_placeholder_or_empty(task_md_text: str) -> bool:
+    """Return True if the `## Goal` section is missing, empty, or still the
+    template placeholder. Structural test is primary; phrase-match is a
+    belt-and-braces fallback against template drift."""
+    lines = task_md_text.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == "## Goal")
+    except StopIteration:
+        return True
+    body_lines: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("## "):
+            break
+        body_lines.append(line)
+    body = "\n".join(body_lines)
+    if goal_body_is_placeholder(body):
+        return True
+    return _GOAL_PLACEHOLDER_MARKER in body
+
+
+def validate_task_goal(task_md: Path) -> None:
+    """Fail if task.md `## Goal` is missing, empty, or still a template
+    placeholder. Called on every `check` / `advance-status` so tasks cannot
+    leave draft with a no-op Goal."""
+    text = task_md.read_text(encoding="utf-8")
+    if goal_is_placeholder_or_empty(text):
+        raise WorkflowError(
+            f"task.md `## Goal` section must describe the expected outcome. "
+            f"Fill it in before running check/advance-status. File: {task_md}"
+        )
+
+
+def validate_task_dir(task_dir: Path, *, check_goal: bool = False) -> None:
     task_paths = derive_task_paths(task_dir)
     ensure_local_path(task_paths.task_dir, task_paths.project_dir, "task")
     ensure_dir(task_paths.task_dir, task_paths.task_dir.name)
@@ -137,6 +188,12 @@ def validate_task_dir(task_dir: Path) -> None:
     ensure_file(task_paths.spec_md, "spec.md")
     ensure_dir(task_paths.review_dir, "review")
     ensure_dir(task_paths.verification_dir, "verification")
+
+    if check_goal:
+        # Opt-in. `advance-status` turns this on when leaving draft so the
+        # Goal gate fires exactly where it should (at promotion time, not
+        # during inspection-only `check`/`activate` calls on fresh drafts).
+        validate_task_goal(task_paths.task_md)
 
     task_data = parse_frontmatter(task_paths.task_md.read_text(encoding="utf-8"))
     validated = validate_task_metadata(task_data)

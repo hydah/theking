@@ -111,6 +111,11 @@ def _advance(tmp_path: Path, task_dir: Path, to: str) -> None:
     limited to the ``ready_to_merge`` transition — all other transitions use
     only the data already seeded by ``init-task``.
     """
+    # sprint-015 TASK-001: draft-exit Goal gate. Ensure Goal is populated
+    # before advancing past draft. Idempotent on non-draft tasks.
+    from conftest import populate_task_goal
+
+    populate_task_goal(task_dir / "task.md")
     evidence = task_dir / "verification" / "cli" / "test.log"
     if to == "ready_to_merge" and not (evidence.exists() and evidence.stat().st_size > 0):
         evidence.parent.mkdir(parents=True, exist_ok=True)

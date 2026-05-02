@@ -162,6 +162,10 @@ def test_bundled_task_passes_check(tmp_path: Path) -> None:
         "## Edge Cases\n- Empty provider\n- Unknown suffix\n- Nil context\n",
         encoding="utf-8",
     )
+    # sprint-015 TASK-001: draft-exit Goal gate.
+    from conftest import populate_task_goal
+
+    populate_task_goal(task_dir / "task.md")
     adv = run_cli(["advance-status", "--task-dir", str(task_dir), "--to-status", "planned"], cwd=tmp_path)
     assert adv.returncode == 0, adv.stderr
 

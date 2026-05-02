@@ -68,6 +68,10 @@ def init_general_task(tmp_path: Path, *, slug: str) -> Path:
         / "tasks" / f"TASK-001-{slug}"
     )
     assert task_dir.is_dir()
+    # sprint-015 TASK-001: draft-exit Goal gate.
+    from conftest import populate_task_goal
+
+    populate_task_goal(task_dir / "task.md")
     return task_dir
 
 

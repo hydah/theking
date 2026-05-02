@@ -184,7 +184,17 @@ def bootstrap_sprint_with_tasks(tmp_path: Path) -> Path:
         ],
         cwd=tmp_path,
     )
-    return workflow_root(tmp_path) / "sprints" / "sprint-001-foundation"
+    sprint_dir = workflow_root(tmp_path) / "sprints" / "sprint-001-foundation"
+    # sprint-015 TASK-001: draft-exit Goal gate. Populate Goal on every
+    # fixture task so tests that advance status past draft do not trip the
+    # gate. Tests that specifically want the placeholder (e.g. Goal-gate
+    # tests themselves) overwrite this with `_overwrite_goal_section`.
+    from conftest import populate_task_goal
+
+    for task_dir in sorted((sprint_dir / "tasks").iterdir()):
+        if task_dir.is_dir():
+            populate_task_goal(task_dir / "task.md")
+    return sprint_dir
 
 
 def test_sprint_check_passes_valid_sprint(tmp_path: Path) -> None:

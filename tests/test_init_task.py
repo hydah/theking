@@ -259,6 +259,12 @@ def test_init_task_generated_spec_requires_author_input_before_red(tmp_path: Pat
         / "TASK-001-login-flow"
     )
     check_result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+    # sprint-015 TASK-001: draft-exit Goal gate. This test focuses on the
+    # spec-section gate firing on planned->red; clear the Goal gate so the
+    # spec-section gate is what's actually under test.
+    from conftest import populate_task_goal
+
+    populate_task_goal(task_dir / "task.md")
     planned_result = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", "planned"],
         cwd=tmp_path,

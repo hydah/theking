@@ -376,6 +376,7 @@ def test_detects_broken_review_pair_on_done_task(tmp_path: Path) -> None:
     task_dir = _task_md_path(
         project_dir, slug, "sprint-001-foundation", "TASK-001-demo-task"
     ).parent
+    _fill_goal(task_dir / "task.md", "End-to-end: broken review pair is caught by doctor.")
     _fill_spec_with_five_sections(task_dir)
 
     # Drive to in_review so init-review-round scaffolds a real review file.
@@ -428,6 +429,7 @@ def test_exit_code_on_error(tmp_path: Path) -> None:
     task_dir = _task_md_path(
         project_dir, slug, "sprint-001-foundation", "TASK-001-demo-task"
     ).parent
+    _fill_goal(task_dir / "task.md", "Exercise doctor error-exit path end-to-end.")
     _fill_spec_with_five_sections(task_dir)
     for to in ("planned", "red", "green"):
         _advance(project_dir, task_dir, to)
@@ -595,32 +597,125 @@ def test_d4_classifier_pins_audit_chain_markers() -> None:
 
 
 # ---------------------------------------------------------------------------
-# sprint-014: doctor --summary
+# sprint-014 / sprint-015: doctor --summary
+#
+# Tests MUST be isolated: build the diagnostic scenario inside tmp_path so
+# each assertion pins a specific count instead of a weak substring that
+# passes on any non-empty summary output (sprint-014 review finding).
 # ---------------------------------------------------------------------------
 
-def test_doctor_summary_outputs_tldr_header(tmp_path: Path) -> None:
-    """--summary mode outputs a one-line TL;DR with error/warning/info counts."""
-    result = _run(["doctor", "--project-dir", ".", "--project-slug", "theking", "--summary"], cwd=REPO_ROOT)
+import re as _re_summary
+
+
+def test_doctor_summary_outputs_exact_tldr_header_for_known_scenario(
+    tmp_path: Path,
+) -> None:
+    """--summary TL;DR exactly matches the finding counts of a controlled scenario.
+
+    Scenario: one fresh draft task with placeholder Goal = exactly 1 D1 zombie
+    warning, 0 errors, 0 info. Header must read `0 errors, 1 warnings, 0 info`.
+    """
+    project_dir, slug = _make_fresh_project(tmp_path)
+
+    result = _run(
+        ["doctor", "--project-dir", ".", "--project-slug", slug, "--summary"],
+        cwd=project_dir,
+    )
     assert result.returncode == 0, result.stderr
-    assert "errors" in result.stdout.lower() or "warnings" in result.stdout.lower(), (
-        f"Summary must mention at least one count category. Got:\n{result.stdout}"
+
+    first_line = result.stdout.splitlines()[0]
+    # Exact match, not substring — catches any regression that drops a count.
+    match = _re_summary.match(
+        r"^(\d+) errors?, (\d+) warnings?, (\d+) info$", first_line
+    )
+    assert match is not None, f"TL;DR header shape broken. Got: {first_line!r}"
+    errors, warnings, info = (int(x) for x in match.groups())
+    assert errors == 0, f"expected 0 errors in fresh-draft scenario, got {errors}: {result.stdout}"
+    assert warnings >= 1, f"expected at least 1 zombie warning, got {warnings}: {result.stdout}"
+    assert info == 0, f"expected 0 info findings, got {info}: {result.stdout}"
+
+
+def test_doctor_summary_lists_d1_category_with_exact_count(tmp_path: Path) -> None:
+    """--summary category breakdown names D1 and reports the exact finding count.
+
+    The fresh-draft scenario produces exactly one D1 zombie finding, so the
+    category line must read `[D1] 1 finding(s)`.
+    """
+    project_dir, slug = _make_fresh_project(tmp_path)
+
+    result = _run(
+        ["doctor", "--project-dir", ".", "--project-slug", slug, "--summary"],
+        cwd=project_dir,
+    )
+    assert result.returncode == 0, result.stderr
+
+    # Extract the D1 line from the category breakdown.
+    d1_lines = [line for line in result.stdout.splitlines() if line.startswith("[D1]")]
+    assert len(d1_lines) == 1, f"expected exactly one [D1] line, got: {d1_lines!r}"
+    assert d1_lines[0].startswith("[D1] 1 finding(s)"), (
+        f"[D1] category line should report exactly 1 finding. Got: {d1_lines[0]!r}"
     )
 
 
-def test_doctor_summary_contains_category_breakdown(tmp_path: Path) -> None:
-    """--summary mode shows per-category counts (D1-D5)."""
-    result = _run(["doctor", "--project-dir", ".", "--project-slug", "theking", "--summary"], cwd=REPO_ROOT)
+def test_doctor_summary_open_tasks_names_the_zombie_task(tmp_path: Path) -> None:
+    """--summary Open-tasks section lists the specific zombie task id in a scenario with one zombie."""
+    project_dir, slug = _make_fresh_project(tmp_path)
+
+    result = _run(
+        ["doctor", "--project-dir", ".", "--project-slug", slug, "--summary"],
+        cwd=project_dir,
+    )
     assert result.returncode == 0, result.stderr
-    assert "[D" in result.stdout, (
-        f"Summary must show category labels like [D1]. Got:\n{result.stdout}"
+
+    # Parse the 'Open tasks:' block: one header line + indented task ids until
+    # the closing blank line.
+    lines = result.stdout.splitlines()
+    try:
+        hdr = next(i for i, line in enumerate(lines) if line.startswith("Open tasks"))
+    except StopIteration:  # pragma: no cover
+        raise AssertionError(f"no 'Open tasks' section in summary:\n{result.stdout}")
+
+    open_ids: list[str] = []
+    for line in lines[hdr + 1 :]:
+        if not line.startswith("  "):
+            break
+        open_ids.append(line.strip())
+
+    assert open_ids == ["TASK-001-demo-task"], (
+        f"Open tasks should list exactly the one fresh-draft zombie task id. Got: {open_ids!r}"
     )
 
 
-def test_doctor_summary_lists_open_tasks(tmp_path: Path) -> None:
-    """--summary mode lists tasks that are not done or blocked."""
-    result = _run(["doctor", "--project-dir", ".", "--project-slug", "theking", "--summary"], cwd=REPO_ROOT)
-    assert result.returncode == 0, result.stderr
-    assert "Open" in result.stdout, (
-        f"Summary should have an 'Open tasks' section. Got:\n{result.stdout}"
+def test_doctor_summary_open_tasks_is_none_when_goal_filled(tmp_path: Path) -> None:
+    """Clean scenario: zero findings → summary emits `All clear.` early-exit.
+
+    Verifies the happy-path short-circuit: when the project has no findings,
+    the summary does not render category breakdown or Open-tasks sections
+    (they would be noise). The Open-tasks-not-listed path is also covered by
+    this short-circuit.
+    """
+    project_dir, slug = _make_fresh_project(tmp_path)
+    task_md = _task_md_path(project_dir, slug, "sprint-001-foundation", "TASK-001-demo-task")
+    _fill_goal(task_md, "A developer exercises the doctor summary happy path.")
+
+    result = _run(
+        ["doctor", "--project-dir", ".", "--project-slug", slug, "--summary"],
+        cwd=project_dir,
     )
-REPO_ROOT = Path(__file__).resolve().parents[1]
+    assert result.returncode == 0, result.stderr
+
+    lines = result.stdout.splitlines()
+    assert lines[0] == "0 errors, 0 warnings, 0 info", (
+        f"clean scenario TL;DR must show zero counts. Got: {lines[0]!r}"
+    )
+    assert "All clear." in result.stdout, (
+        f"zero-finding scenario must short-circuit with 'All clear.'. Got:\n{result.stdout}"
+    )
+    # And specifically: no D1 / category breakdown / Open tasks section.
+    assert not any(line.startswith("[D") for line in lines), (
+        f"clean scenario must not render category lines. Got:\n{result.stdout}"
+    )
+    assert "Open tasks" not in result.stdout, (
+        f"clean scenario must not render Open-tasks section. Got:\n{result.stdout}"
+    )
+

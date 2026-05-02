@@ -35,6 +35,8 @@ try:
         derive_task_paths,
         get_theking_dir,
         get_workflow_project_dir,
+        goal_body_is_placeholder as _goal_body_is_placeholder,
+        goal_is_placeholder_or_empty as _goal_is_placeholder_or_empty,
         load_task_document,
         stringify,
         validate_task_dir,
@@ -50,6 +52,8 @@ except ImportError:  # pragma: no cover - dual-import fallback
         derive_task_paths,
         get_theking_dir,
         get_workflow_project_dir,
+        goal_body_is_placeholder as _goal_body_is_placeholder,
+        goal_is_placeholder_or_empty as _goal_is_placeholder_or_empty,
         load_task_document,
         stringify,
         validate_task_dir,
@@ -73,22 +77,14 @@ PROJECTION_SUBDIRS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _goal_body_is_placeholder(body: str) -> bool:
-    """Return True if the Goal body consists only of HTML comments / blank
-    lines / whitespace — i.e. nothing a human has actually written.
+def _goal_body_is_placeholder_legacy_removed() -> None:
+    """Shim: the canonical helpers now live in validation.py.
 
-    This is the structural test. The literal template-phrase marker below is
-    kept as a belt-and-braces redundancy so that if someone writes real prose
-    that happens to contain the phrase verbatim, we still classify correctly.
+    They are re-imported above as `_goal_body_is_placeholder` and
+    `_goal_is_placeholder_or_empty` so existing callers inside this module
+    keep working without duplication. This stub exists only to preserve a
+    stable anchor for `git blame` readers looking for the old definitions.
     """
-    stripped = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
-    return not stripped
-
-
-# Legacy phrase-match fallback for the Goal placeholder. Template prose drift
-# would silently neuter this, which is why `_goal_body_is_placeholder` is the
-# primary gate and this marker is only a secondary tripwire.
-_GOAL_PLACEHOLDER_MARKER = "Describe the expected OUTCOME"
 
 
 @dataclass
@@ -164,31 +160,13 @@ def _iter_task_dirs(project_dir: Path, project_slug: str):
             yield sprint_dir, task_dir
 
 
-def _goal_is_placeholder_or_empty(task_md_text: str) -> bool:
-    """Return True if the Goal section is missing, empty, or still carries the
-    template placeholder comment.
+def _goal_is_placeholder_or_empty_legacy_removed() -> None:
+    """Shim: canonical implementation lives in validation.py.
 
-    Primary gate: body is structurally empty once HTML comments / whitespace
-    are stripped (see `_goal_body_is_placeholder`). Template-phrase matching
-    is kept as a redundant tripwire to avoid coupling zombie detection to
-    one exact wording of the comment scaffold.
+    Imported above as `_goal_is_placeholder_or_empty` for use by
+    `check_zombie_tasks`. This stub preserves a git-blame anchor for the
+    previous local definition.
     """
-    lines = task_md_text.splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == "## Goal")
-    except StopIteration:
-        return True
-    # Collect body until the next `## ` header.
-    body_lines: list[str] = []
-    for line in lines[start + 1 :]:
-        if line.startswith("## "):
-            break
-        body_lines.append(line)
-    body = "\n".join(body_lines)
-    if _goal_body_is_placeholder(body):
-        return True
-    # Redundant phrase tripwire — belt-and-braces.
-    return _GOAL_PLACEHOLDER_MARKER in body
 
 
 def check_zombie_tasks(project_dir: Path, project_slug: str, report: DoctorReport) -> None:
