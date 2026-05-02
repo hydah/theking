@@ -252,6 +252,22 @@ uv run --with pytest pytest tests -q
   - `### Failure modes` + `### Happy variants` 子节：Failure modes ≥ 2 + Happy variants ≥ 1（full）或 Failure modes ≥ 1（lightweight）
   混合（同时有顶层 bullet 和子节）会被拒。所有闸门**无 --skip 开关**。
 
+### 治理闸自治（sprint-019，ADR-006）
+
+Sprint-017 自省发现主 agent 在自己设计的治理规则下依然犯了 3 条纪律违规。sprint-019 的原则是："治理规则必须机器化强制，要么是 runtime gate，要么是 audit trail"。
+
+- **新 task 判定**：`task.md` frontmatter 加 `theking_schema_version: 1` + `created_at` 字段。**新 task**（有 schema_version）走严格闸；**legacy task**（无字段）继续走 silent-pass 宽容路径。
+- **handoff 严格化**：新 task 的 `handoff.md` 在 planned→red 时必须填 Phase 1 evidence anchors（file:line 格式）；legacy 可缺可空。
+- **spec 严格化**：新 task 不允许 2-section legacy spec；必须 Scope/Non-Goals/Acceptance/Test Plan/Edge Cases 五段齐全。
+- **TDD 顺序闸**：`advance-status planned → red` 扫描 git staged diff + HEAD commit；新 task 如存在非 tests/** 生产代码改动，**拒执**。`skeleton: true` 可作为编译型语言逃生阀。同时新增 `workflowctl red-check` 独立子命令供 hook / CI 调用。
+- **PreToolUse hook 严格化**：`.theking/hooks/check-spec-exists.js` 在**无 active-task** 时编辑生产代码路径改为 `exit 1`（原为 warn+pass）；tests/ 和 .theking/ 路径继续放行。
+- **Reviewer 独立性声明**：`code-review-round-NNN.md` 新增 `Reviewer:` 与 `Reviewer independence:` 字段（可选值 `self` / `subagent-via-task-tool` / `subagent-via-cli` / `main-agent-fallback`）；自审（self/main-agent-fallback）要求 `## Self-audit checklist` 至少 10 个顶级 bullet。
+- **Append-only ledger + audit**：每个 state transition 自动向 `<task_dir>/ledger.jsonl` 追加 JSON 行，含 timestamp / git_head / staged_diff_summary / sha256 prev_hash 链。新子命令：
+  - `workflowctl ledger --task-dir <dir> [--tail N]` 人类可读打印
+  - `workflowctl audit --task-dir <dir> [--strict]` 验证 chain-hash 完整性 + 时间戳单调性；默认 advisory，`--strict` 有 finding 则 exit != 0
+
+这些闸一起把"主 agent 在自己设计的治理下作弊"这类违规从"靠自觉"变成"机器可验证"。
+
 ## 测试
 
 ```bash
