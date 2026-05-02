@@ -416,6 +416,190 @@ def is_new_theking_task(task_data: dict[str, Any]) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
 
 
+# --- TDD order gate on red transition (sprint-019 TASK-003) ----------------
+#
+# The red state has a semantic meaning: "the failing tests exist, the
+# implementation does not yet". Before sprint-019 this was enforced
+# purely via skill text — which an LLM could rationalize away by
+# running `git stash push scripts/` AFTER writing the implementation
+# and re-claiming the state. This gate reads the git index + HEAD
+# commit and rejects transitions where production code has already
+# been written.
+#
+# Scope: only for new tasks (is_new_theking_task). Legacy tasks keep
+# their pre-sprint-019 silent-pass. Mechanical flow tasks skip red
+# entirely and never trigger this gate. `skeleton: true` frontmatter
+# is the compiled-language escape hatch (Go/Rust/Java/C++ need a
+# skeleton phase; see tdd-guide.md Step 1.9).
+
+_TEST_PATH_PATTERNS = (
+    re.compile(r"^tests/"),
+    re.compile(r"(^|/)conftest\.py$"),
+    re.compile(r"(^|/)test_[^/]+\.(py|ts|tsx|js|jsx)$"),
+    re.compile(r"(^|/)[^/]+_test\.(py|go|ts|tsx|js|jsx)$"),
+    re.compile(r"(^|/)[^/]+\.test\.(ts|tsx|js|jsx)$"),
+    re.compile(r"(^|/)[^/]+\.spec\.(ts|tsx|js|jsx)$"),
+)
+_METADATA_PATH_PATTERNS = (
+    re.compile(r"^\.theking/"),
+    re.compile(r"^\.claude/"),
+    re.compile(r"^\.codebuddy/"),
+    re.compile(r"^\.kimi/"),
+    re.compile(r"^\.github/"),
+)
+_PRODUCTION_PATH_EXTS = (
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java",
+    ".c", ".h", ".cpp", ".hpp", ".cs", ".swift", ".kt", ".rb", ".php",
+)
+
+
+def classify_diff_path(rel_path: str) -> str:
+    """Classify a repo-relative path into one of four categories.
+
+    - ``test``        : part of the test surface
+    - ``metadata``    : theking / IDE config / governance artifacts
+    - ``production``  : executable code that implements business logic
+    - ``other``       : everything else (docs, config, assets)
+
+    Used by ``validate_red_transition_diff`` to decide whether a staged
+    change violates the "red = tests only" invariant.
+    """
+    normalized = rel_path.replace("\\", "/")
+    for pat in _METADATA_PATH_PATTERNS:
+        if pat.search(normalized):
+            return "metadata"
+    for pat in _TEST_PATH_PATTERNS:
+        if pat.search(normalized):
+            return "test"
+    if normalized.endswith(_PRODUCTION_PATH_EXTS):
+        return "production"
+    return "other"
+
+
+def _git_is_available(project_dir: Path) -> bool:
+    import shutil as _shutil
+
+    if _shutil.which("git") is None:
+        return False
+    git_dir = project_dir / ".git"
+    return git_dir.exists()
+
+
+def _git_staged_paths(project_dir: Path) -> list[str]:
+    """Return repo-relative paths with staged changes (uncommitted)."""
+    import subprocess as _sp
+
+    try:
+        r = _sp.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=project_dir, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return []
+    if r.returncode != 0:
+        return []
+    return [line for line in r.stdout.splitlines() if line.strip()]
+
+
+def _git_head_commit_paths(project_dir: Path) -> list[str]:
+    """Return repo-relative paths changed in the most recent commit.
+
+    Empty list when the repo has no HEAD yet (fresh `git init` before
+    first commit), or when HEAD exists but has no parent (first commit —
+    we just list its tree).
+    """
+    import subprocess as _sp
+
+    try:
+        head = _sp.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=project_dir, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return []
+    if head.returncode != 0:
+        return []  # no HEAD yet
+
+    # Try diff against HEAD~1; if that fails (first commit), list HEAD's tree.
+    try:
+        r = _sp.run(
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            cwd=project_dir, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return []
+    if r.returncode == 0:
+        return [line for line in r.stdout.splitlines() if line.strip()]
+
+    # HEAD~1 doesn't exist (first commit) — return files in HEAD's tree.
+    try:
+        r2 = _sp.run(
+            ["git", "show", "--name-only", "--pretty=format:", "HEAD"],
+            cwd=project_dir, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return []
+    if r2.returncode != 0:
+        return []
+    return [line for line in r2.stdout.splitlines() if line.strip()]
+
+
+def validate_red_transition_diff(
+    task_paths: Any,
+    project_dir: Path,
+    *,
+    task_is_new: bool = False,
+    skeleton: bool = False,
+) -> None:
+    """Reject the planned→red transition when production code is already
+    staged or present in the most recent HEAD commit.
+
+    task_paths: any object with a ``task_dir`` attribute (duck-typed so
+    tests can pass a minimal dataclass).
+
+    Rules:
+      - task_is_new=False (legacy): silent pass.
+      - skeleton=True (compiled-language skeleton phase): silent pass.
+      - project_dir is not a git repo / git is not available: silent pass.
+      - Otherwise: classify every path in (staged_diff ∪ HEAD commit) —
+        if any classifies as ``production``, raise with actionable error
+        naming the offending paths and suggesting `git stash push <paths>`.
+
+    The HEAD commit scan is the anti-stash guard: an author who
+    stages implementation, commits it, then stashes it to fake a
+    red state will still have their most-recent-commit diff read
+    here.
+    """
+    if not task_is_new or skeleton:
+        return
+    if not _git_is_available(project_dir):
+        return
+
+    paths_to_check = set(_git_staged_paths(project_dir))
+    paths_to_check.update(_git_head_commit_paths(project_dir))
+    if not paths_to_check:
+        return
+
+    offenders = sorted(
+        path for path in paths_to_check
+        if classify_diff_path(path) == "production"
+    )
+    if not offenders:
+        return
+
+    joined = " ".join(offenders[:5])
+    more = "" if len(offenders) <= 5 else f" (+{len(offenders) - 5} more)"
+    raise WorkflowError(
+        "red transition rejected: production code is present in the "
+        f"git index or HEAD commit{more}. A new task must enter 'red' "
+        "with tests-only changes — sprint-019 TASK-003 policy. "
+        f"Offending paths: {offenders}. "
+        f"Fix: `git stash push -- {joined}` (then retry advance-status), "
+        "or declare `skeleton: true` in task.md frontmatter if this is "
+        "a compiled-language skeleton phase."
+    )
+
+
 SPEC_SECTION_COUNT_THRESHOLDS_FULL: dict[str, int] = {
     "Test Plan": 5,
     "Edge Cases": 3,

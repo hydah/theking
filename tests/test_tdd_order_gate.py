@@ -301,13 +301,15 @@ def _fill_spec_and_goal(task_dir: Path) -> None:
 def test_cli_advance_status_rejects_mixed_staged(tmp_path: Path) -> None:
     """End-to-end: new task + production code staged → advance-status
     planned→red rejects."""
-    _git(["init", "--quiet", "-b", "main"], tmp_path)
-    _git(["commit", "--quiet", "--allow-empty", "-m", "root"], tmp_path)
     task_dir = _bootstrap_new_task(tmp_path)
     _fill_spec_and_goal(task_dir)
 
     project_dir = tmp_path / "demo-app"
-    # Stage a production-looking file at the project root.
+    # Init git *inside the project dir* so validate_red_transition_diff
+    # sees a real repo rooted at project_dir (same invariant as real
+    # workflowctl invocations on a project root).
+    _git(["init", "--quiet", "-b", "main"], project_dir)
+    _git(["commit", "--quiet", "--allow-empty", "-m", "root"], project_dir)
     _stage(project_dir, "scripts/feature.py", "def feat(): pass\n")
 
     r_planned = run_cli(["advance-status", "--task-dir", str(task_dir), "--to-status", "planned"], cwd=tmp_path)
@@ -324,11 +326,10 @@ def test_cli_advance_status_rejects_mixed_staged(tmp_path: Path) -> None:
 def test_red_check_subcommand_exit_codes(tmp_path: Path) -> None:
     """`workflowctl red-check --task-dir <dir>` must be a first-class
     subcommand that exits 0 on clean, != 0 on violation."""
-    _git(["init", "--quiet", "-b", "main"], tmp_path)
-    _git(["commit", "--quiet", "--allow-empty", "-m", "root"], tmp_path)
     task_dir = _bootstrap_new_task(tmp_path)
-
     project_dir = tmp_path / "demo-app"
+    _git(["init", "--quiet", "-b", "main"], project_dir)
+    _git(["commit", "--quiet", "--allow-empty", "-m", "root"], project_dir)
 
     # Clean: no staged production changes
     r_clean = run_cli(["red-check", "--task-dir", str(task_dir)], cwd=tmp_path)

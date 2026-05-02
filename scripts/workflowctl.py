@@ -82,6 +82,7 @@ try:
         stringify,
         task_requires_security_review,
         validate_handoff_evidence_anchors,
+        validate_red_transition_diff,
         validate_sprint_dir,
         validate_sprint_location,
         validate_sprint_smoke_evidence,
@@ -166,6 +167,7 @@ except ImportError:
         stringify,
         task_requires_security_review,
         validate_handoff_evidence_anchors,
+        validate_red_transition_diff,
         validate_sprint_dir,
         validate_sprint_location,
         validate_sprint_smoke_evidence,
@@ -315,6 +317,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check.add_argument("--task-dir", required=True)
     check.set_defaults(handler=handle_check)
+
+    # sprint-019 TASK-003: standalone TDD order gate
+    red_check = add_command_parser(
+        subparsers,
+        "red-check",
+        help_text=(
+            "Check if the current git state allows a planned->red "
+            "transition for the given task (tests-only diff for new tasks)."
+        ),
+        example="workflowctl red-check --task-dir .theking/workflows/my-app/sprints/sprint-001/tasks/TASK-001-demo",
+    )
+    red_check.add_argument("--task-dir", required=True)
+    red_check.set_defaults(handler=handle_red_check)
 
     advance_status = add_command_parser(
         subparsers,
@@ -788,6 +803,27 @@ def handle_check(args: argparse.Namespace) -> None:
     print(f"OK {task_dir}")
 
 
+def handle_red_check(args: argparse.Namespace) -> None:
+    """sprint-019 TASK-003: standalone red-transition diff gate. Useful
+    for PreToolUse hooks and ad-hoc CI checks that want to know if the
+    current index allows a red transition without actually triggering
+    the transition."""
+    input_task_dir = Path(args.task_dir).expanduser()
+    if input_task_dir.is_symlink():
+        raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
+    task_dir = input_task_dir.resolve()
+    validate_task_dir(task_dir)
+    task_paths = derive_task_paths(task_dir)
+    task_data, _body = load_task_document(task_paths.task_md)
+    validate_red_transition_diff(
+        task_paths,
+        task_paths.project_dir,
+        task_is_new=is_new_theking_task(task_data),
+        skeleton=bool(task_data.get("skeleton")),
+    )
+    print(f"OK red-check passed for {task_dir}")
+
+
 def handle_advance_status(args: argparse.Namespace) -> None:
     input_task_dir = Path(args.task_dir).expanduser()
     if input_task_dir.is_symlink():
@@ -824,6 +860,14 @@ def handle_advance_status(args: argparse.Namespace) -> None:
         validate_handoff_evidence_anchors(
             task_paths.task_dir / "handoff.md",
             task_is_new=is_new_theking_task(task_data),
+        )
+        # sprint-019 TASK-003: red transition's git diff must be tests-only
+        # for new tasks (stops the "stash impl, fake red" dance).
+        validate_red_transition_diff(
+            task_paths,
+            task_paths.project_dir,
+            task_is_new=is_new_theking_task(task_data),
+            skeleton=bool(task_data.get("skeleton")),
         )
 
     # sprint-017 TASK-002: test-runner PASS marker gate on red->green and
