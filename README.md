@@ -239,6 +239,19 @@ uv run --with pytest pytest tests -q
 - ready_to_merge 或 done 前必须存在从 round 001 到 current_review_round 的全部 review pair
 - 标记 requires_security_review 或 verification_profile 包含 `web.browser` 时，会额外要求对应 review 成对文件
 
+### 测试治理闸（sprint-017）
+
+- **advance-status red → green / green → in_review** 必须在 `verification/<profile>/` 找到一个公认的 test runner PASS 标志（pytest / go test / jest / vitest / cargo test / junit）。仅 narrative 不够，须贴真实 runner 输出片段。
+- **ready_to_merge / done** 除字符数门禁（ADR-003）外，还需通过 per-profile shape 门禁（ADR-005）：
+  - `backend.cli`：`$ <cmd>` 或 `Command:` + `Exit: N` / `exit code N`
+  - `backend.http`：HTTP 方法动词行 + 3 位状态码
+  - `backend.job`：start 动词 + complete 动词
+  - `web.browser`：≥ 512 字节的真实二进制 artifact（PNG/JPEG/WebM/MP4/PDF/ZIP/GIF/WebP，按 magic byte 验证）或 markdown 图片引用指向此类文件
+- **planned → red**：spec.md 的 `## Edge Cases` 支持两种形态：
+  - 扁平 bullet（向后兼容）：total ≥ 3（full）/ ≥ 1（lightweight）
+  - `### Failure modes` + `### Happy variants` 子节：Failure modes ≥ 2 + Happy variants ≥ 1（full）或 Failure modes ≥ 1（lightweight）
+  混合（同时有顶层 bullet 和子节）会被拒。所有闸门**无 --skip 开关**。
+
 ## 测试
 
 ```bash
