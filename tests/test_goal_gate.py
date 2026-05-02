@@ -9,14 +9,11 @@ placeholder Goal (root cause of the sprint-014 self-inflicted zombies).
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-from tests.test_check_rules import make_valid_task_tree, run_cli, write_text
-
+from tests.test_check_rules import make_valid_task_tree, run_cli
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
 

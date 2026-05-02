@@ -15,8 +15,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "workflowctl.py"
 
 
@@ -680,8 +678,8 @@ def test_doctor_summary_open_tasks_names_the_zombie_task(tmp_path: Path) -> None
     lines = result.stdout.splitlines()
     try:
         hdr = next(i for i, line in enumerate(lines) if line.startswith("Open tasks"))
-    except StopIteration:  # pragma: no cover
-        raise AssertionError(f"no 'Open tasks' section in summary:\n{result.stdout}")
+    except StopIteration as error:  # pragma: no cover
+        raise AssertionError(f"no 'Open tasks' section in summary:\n{result.stdout}") from error
 
     open_ids: list[str] = []
     for line in lines[hdr + 1 :]:

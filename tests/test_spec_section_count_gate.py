@@ -34,7 +34,6 @@ from validation import (  # noqa: E402
     validate_spec_section_counts,
 )
 
-
 FULL_FLOW_SPEC = """# Task Spec
 
 ## Scope

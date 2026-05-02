@@ -19,7 +19,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from validation import render_template  # noqa: E402
 
-
 PROJECT_SLUG = "demo-app"
 
 

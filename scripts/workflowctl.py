@@ -17,6 +17,12 @@ try:
         THEKING_DIRNAME,
         WorkflowError,
     )
+    from .doctor import (
+        format_report_json,
+        format_report_summary,
+        format_report_text,
+        run_diagnostics,
+    )
     from .scaffold import (
         RUNTIME_BACKUP_ROOT_RELATIVE,
         collect_managed_runtime_artifacts,
@@ -32,12 +38,6 @@ try:
         load_active_task_status,
         load_decree_checkpoint,
         write_decree_checkpoint,
-    )
-    from .doctor import (
-        format_report_json,
-        format_report_summary,
-        format_report_text,
-        run_diagnostics,
     )
     from .sprint_plan import (
         parse_bundles,
@@ -100,6 +100,12 @@ except ImportError:
         THEKING_DIRNAME,
         WorkflowError,
     )
+    from doctor import (
+        format_report_json,
+        format_report_summary,
+        format_report_text,
+        run_diagnostics,
+    )
     from scaffold import (
         RUNTIME_BACKUP_ROOT_RELATIVE,
         collect_managed_runtime_artifacts,
@@ -115,12 +121,6 @@ except ImportError:
         load_active_task_status,
         load_decree_checkpoint,
         write_decree_checkpoint,
-    )
-    from doctor import (
-        format_report_json,
-        format_report_summary,
-        format_report_text,
-        run_diagnostics,
     )
     from sprint_plan import (
         parse_bundles,
@@ -1711,10 +1711,7 @@ def handle_verify(args: argparse.Namespace) -> None:
     substantive_chars_appended = len(new_evidence_text) - pre_evidence_len
 
     # --- Decide summary status ---
-    if timed_out:
-        summary_status = "command_failed"
-        ledger_status = "command_failed"
-    elif command_exit != 0:
+    if timed_out or command_exit != 0:
         summary_status = "command_failed"
         ledger_status = "command_failed"
     else:

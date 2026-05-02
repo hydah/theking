@@ -251,8 +251,6 @@ def test_skill_md_contains_hard_rule_9() -> None:
         "`9. **...**`. Actual content near the section:\n"
         + content[content.find("## ⛔ 硬规则"):content.find("## ⛔ 硬规则") + 2000]
     )
-    # The rule should be about runnable / smoke / 启动 evidence.
-    rule_line = rule_9.group(0)
     # Read a broader slice to include the body until the next rule/section.
     rule_block_match = re.search(
         r"^9\.\s+.*?(?=^(?:\d+\.\s|\#\#\s)|\Z)",

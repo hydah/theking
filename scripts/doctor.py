@@ -19,7 +19,6 @@ stdout.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,28 +34,30 @@ try:
         derive_task_paths,
         get_theking_dir,
         get_workflow_project_dir,
-        goal_body_is_placeholder as _goal_body_is_placeholder,
-        goal_is_placeholder_or_empty as _goal_is_placeholder_or_empty,
         load_task_document,
         stringify,
         validate_task_dir,
     )
+    from .validation import (
+        goal_is_placeholder_or_empty as _goal_is_placeholder_or_empty,
+    )
 except ImportError:  # pragma: no cover - dual-import fallback
-    from constants import WorkflowError  # type: ignore[no-redef]
-    from sessions import (  # type: ignore[no-redef]
+    from constants import WorkflowError
+    from sessions import (
         get_decree_checkpoint_path,  # noqa: F401
         load_decree_checkpoint,
     )
-    from sprint_plan import sprint_is_sealed  # type: ignore[no-redef]
-    from validation import (  # type: ignore[no-redef]
+    from sprint_plan import sprint_is_sealed
+    from validation import (
         derive_task_paths,
         get_theking_dir,
         get_workflow_project_dir,
-        goal_body_is_placeholder as _goal_body_is_placeholder,
-        goal_is_placeholder_or_empty as _goal_is_placeholder_or_empty,
         load_task_document,
         stringify,
         validate_task_dir,
+    )
+    from validation import (
+        goal_is_placeholder_or_empty as _goal_is_placeholder_or_empty,
     )
 
 

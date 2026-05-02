@@ -149,8 +149,8 @@ def test_phase_rationalizations_are_adjacent_to_their_red_flags() -> None:
         try:
             red_idx = next(i for i, line in enumerate(lines) if line.strip() == red_heading)
             rat_idx = next(i for i, line in enumerate(lines) if line.strip() == rat_heading)
-        except StopIteration:
-            raise AssertionError(f"Phase {n} headings not both found")
+        except StopIteration as error:
+            raise AssertionError(f"Phase {n} headings not both found") from error
         distance = abs(red_idx - rat_idx)
         assert distance <= 60, (
             f"Phase {n}: distance between `{red_heading}` and "

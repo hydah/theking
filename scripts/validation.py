@@ -1462,9 +1462,8 @@ def _handoff_has_anchor_under_target_section(content: str) -> bool:
             if in_target and indent <= target_indent:
                 in_target = False
                 target_indent = -1
-        if in_target and indent > target_indent:
-            if HANDOFF_FILE_LINE_PATTERN.search(raw_line):
-                return True
+        if in_target and indent > target_indent and HANDOFF_FILE_LINE_PATTERN.search(raw_line):
+            return True
     return False
 
 

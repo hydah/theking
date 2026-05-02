@@ -16,7 +16,6 @@ from scripts.validation import (  # type: ignore[attr-defined,import-not-found]
     validate_review_resolution_coverage,
 )
 
-
 # ---------- Helpers ----------
 
 def _write(path: Path, content: str) -> None:
