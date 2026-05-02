@@ -130,6 +130,13 @@ def _advance(tmp_path: Path, task_dir: Path, to: str) -> None:
             "Exit: 0\n",
             encoding="utf-8",
         )
+    # sprint-017 TASK-002: red->green and green->in_review now require a
+    # runner PASS marker. Plant a minimal pytest-style marker before any
+    # transition that touches green; idempotent on repeat calls.
+    if to == "green":
+        from conftest import plant_test_pass_marker
+
+        plant_test_pass_marker(task_dir)
     r = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", to],
         cwd=tmp_path,

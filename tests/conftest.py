@@ -49,3 +49,39 @@ def populate_task_goal(task_md: Path, goal_text: str | None = None) -> None:
     new_block = ["## Goal", goal_text, ""]
     task_md.write_text("\n".join(lines[:start] + new_block + lines[end:]) + "\n", encoding="utf-8")
 
+
+# ---------------------------------------------------------------------------
+# sprint-017 TASK-002: shared helper to plant a test-runner PASS marker
+# into a task's verification/<profile>/ dir. Tests that fast-forward a
+# task to green (bypassing the red->green CLI transition via frontmatter
+# edit) still need to satisfy the pass-marker gate when init-review-round
+# runs green->in_review. Centralising this here prevents fixture drift.
+# ---------------------------------------------------------------------------
+
+
+def plant_test_pass_marker(
+    task_dir: Path,
+    *,
+    profile: str = "cli",
+    runner: str = "pytest",
+    filename: str = "pass-marker.log",
+) -> None:
+    """Drop a minimal file with a recognised PASS marker for ``runner``.
+
+    ``profile`` is the verification/<dirname> short name (cli / http /
+    job / browser). Callers with a specific profile can pick it;
+    default is cli which covers ~90% of tests.
+    """
+    pass_lines = {
+        "pytest": "569 passed, 2 skipped in 59.23s\n",
+        "go-test": "--- PASS: TestOne (0.01s)\nok  \tpkg\t0.012s\nPASS\n",
+        "jest": "Tests: 42 passed, 42 total\n",
+        "vitest": "Test Files  3 passed (3)\n     Tests  12 passed (12)\n",
+        "cargo": "test result: ok. 12 passed; 0 failed; 0 ignored\n",
+        "junit": "Tests run: 42, Failures: 0, Errors: 0, Skipped: 0\n",
+    }
+    marker = pass_lines.get(runner, pass_lines["pytest"])
+    profile_dir = task_dir / "verification" / profile
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / filename).write_text(marker, encoding="utf-8")
+

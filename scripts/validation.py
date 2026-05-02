@@ -841,9 +841,7 @@ def _is_accepted_browser_binary(path: Path) -> bool:
     if any(head.startswith(sig) for sig in _WEB_BROWSER_MAGIC_BYTES):
         return True
     # WebP: "RIFF" + 4-byte size + "WEBP"
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return True
-    return False
+    return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
 
 
 def _strip_html_comments(text: str) -> str:
@@ -1029,6 +1027,159 @@ def _validate_web_browser_shape(profile_dir: Path) -> None:
         "png/jpeg/webm/mp4/pdf/zip/gif) and no markdown image reference "
         "resolves to such a file under the profile dir",
     )
+
+
+# --- Test-runner pass-marker gate (sprint-017 TASK-002) ---------------------
+#
+# The shape gate (TASK-001) runs at ready_to_merge/done and demands real
+# profile-specific anchors. But red->green and green->in_review had no
+# evidence check at all — an agent could toggle state without ever
+# pasting a test runner's stdout. This gate plugs that hole by scanning
+# the profile dir for a recognisable runner PASS marker and rejecting
+# when either (a) no PASS anchor is present, or (b) PASS is present but
+# so is FAIL/Error (mixed = overall failure).
+
+# PASS anchors per runner family. Each pattern is boring on purpose.
+_PYTEST_PASS = re.compile(r"\b(\d+)\s+passed\b", re.IGNORECASE)
+_GO_PASS_LINE = re.compile(r"(?m)^\s*(?:---\s+)?PASS(?::\s|\s*$)")
+_GO_OK_PACKAGE = re.compile(r"(?m)^ok\s+\S+\s+\d+\.\d+s")
+_JEST_PASS = re.compile(r"(?im)^\s*Tests:\s+.*\b(\d+)\s+passed\b")
+_VITEST_PASS = re.compile(
+    r"(?im)^\s*(?:Test Files|\s+Tests)\s+(\d+)\s+passed\b"
+)
+_CARGO_PASS = re.compile(
+    r"test result:\s*ok\.\s*(\d+)\s+passed", re.IGNORECASE
+)
+_JUNIT_PASS = re.compile(
+    r"Tests run:\s*(\d+),\s*Failures:\s*0,\s*Errors:\s*0",
+    re.IGNORECASE,
+)
+
+# FAIL anchors. Must be specific enough to avoid false positives on
+# unrelated words like "FAILOVER" or "failed login (spec wording)".
+_PYTEST_FAIL = re.compile(r"\b(\d+)\s+failed\b", re.IGNORECASE)
+_GO_FAIL_LINE = re.compile(r"(?m)^\s*(?:---\s+)?FAIL(?::\s|\s*$)")
+_GO_FAIL_PACKAGE = re.compile(r"(?m)^FAIL\s+\S+\s+\d+\.\d+s")
+_PYTEST_ERROR = re.compile(
+    r"(?m)^ERROR\s+\S|(?:\b\d+\s+error)", re.IGNORECASE
+)
+_JEST_FAIL = re.compile(
+    r"(?im)^\s*Tests:\s+.*\b([1-9]\d*)\s+failed\b"
+)
+_JUNIT_FAIL = re.compile(
+    r"Tests run:\s*\d+,\s*Failures:\s*([1-9]\d*)",
+    re.IGNORECASE,
+)
+_CARGO_FAIL = re.compile(
+    r"test result:\s*FAILED\.|(\d+)\s+failed;", re.IGNORECASE
+)
+
+# "No tests collected / ran" markers — count as rejection even if a
+# zero-count 'passed' literal appears.
+_NO_TESTS_RAN = re.compile(
+    r"(?i)\b(?:no\s+tests?\s+ran|collected\s+0\s+items?|running\s+0\s+tests|ran\s+0\s+tests)\b"
+)
+_ZERO_PASSED = re.compile(
+    r"\b0\s+passed\b(?:\s*,\s*0\s+failed\b)?", re.IGNORECASE
+)
+
+
+def _pass_matches(text: str) -> list[tuple[str, str]]:
+    """Return (runner_name, matched_substr) for every PASS anchor found.
+
+    Ordering is stable so tests can introspect the list.
+    """
+    hits: list[tuple[str, str]] = []
+    for runner, pattern in (
+        ("pytest", _PYTEST_PASS),
+        ("go-test (--- PASS)", _GO_PASS_LINE),
+        ("go-test (ok pkg)", _GO_OK_PACKAGE),
+        ("jest", _JEST_PASS),
+        ("vitest", _VITEST_PASS),
+        ("cargo test", _CARGO_PASS),
+        ("junit", _JUNIT_PASS),
+    ):
+        for m in pattern.finditer(text):
+            hits.append((runner, m.group(0)))
+    return hits
+
+
+def _fail_matches(text: str) -> list[tuple[str, str]]:
+    hits: list[tuple[str, str]] = []
+    for runner, pattern in (
+        ("pytest", _PYTEST_FAIL),
+        ("pytest error", _PYTEST_ERROR),
+        ("go-test line", _GO_FAIL_LINE),
+        ("go-test package", _GO_FAIL_PACKAGE),
+        ("jest", _JEST_FAIL),
+        ("junit", _JUNIT_FAIL),
+        ("cargo test", _CARGO_FAIL),
+    ):
+        for m in pattern.finditer(text):
+            hits.append((runner, m.group(0)))
+    return hits
+
+
+_PASS_MARKER_ERROR = (
+    "Evidence must contain a recognised test-runner PASS marker before "
+    "advancing to this status. Supported runner outputs: pytest "
+    "('N passed'), go test ('--- PASS:' / 'ok  pkg  0.012s' / 'PASS'), "
+    "jest ('Tests: N passed'), vitest ('Tests  N passed'), cargo test "
+    "('test result: ok. N passed'), junit ('Tests run: N, Failures: 0, "
+    "Errors: 0'). Paste one of the above into "
+    "verification/<profile>/. No --skip flag is available."
+)
+
+
+def validate_test_pass_marker(profile_dir: Path) -> None:
+    """Scan ``profile_dir`` for a recognised test-runner PASS marker.
+
+    Raises ``WorkflowError`` when:
+      - the profile dir is empty or only contains binaries with no text
+      - none of the supported PASS patterns match
+      - the matching PASS anchor co-exists with a FAIL/Error anchor
+        anywhere in the aggregated text
+      - a 'no tests ran' / 'collected 0 items' signal is present
+        (explicit refusal to accept the zero-tests degenerate case)
+
+    HTML comments are stripped before matching so commented-out PASS
+    text does not count (mirrors ``substantive_text_length``).
+    """
+    text = _collect_profile_text(profile_dir)
+    if not text.strip():
+        raise WorkflowError(
+            _PASS_MARKER_ERROR + " (profile directory has no readable text)"
+        )
+
+    # Degenerate "no tests ran" cases must be rejected even if a literal
+    # "0 passed" appears — that's not a valid PASS anchor.
+    if _NO_TESTS_RAN.search(text) or _ZERO_PASSED.search(text):
+        raise WorkflowError(
+            _PASS_MARKER_ERROR
+            + " (found 'no tests ran' / '0 passed' — needs >= 1 actual test PASS)"
+        )
+
+    pass_hits = _pass_matches(text)
+    if not pass_hits:
+        raise WorkflowError(_PASS_MARKER_ERROR)
+
+    fail_hits = _fail_matches(text)
+    if fail_hits:
+        # Some PASS-shaped lines also accidentally match fail patterns
+        # (e.g. cargo's "0 failed;" inside a green summary). Discard
+        # FAIL hits that refer to explicit zero-count "0 failed".
+        meaningful_fails = [
+            (runner, text_)
+            for runner, text_ in fail_hits
+            if not re.match(r"^\s*0\s+failed", text_, re.IGNORECASE)
+        ]
+        if meaningful_fails:
+            runners = ", ".join(sorted({r for r, _ in meaningful_fails}))
+            raise WorkflowError(
+                "Evidence contains a PASS marker but also a FAIL / Error "
+                f"anchor ({runners}). Mixed-outcome evidence does not clear "
+                "the gate; paste only a green run's output."
+            )
 
 
 AGENT_RUN_LEDGER_REQUIRED_FIELDS: frozenset[str] = frozenset(

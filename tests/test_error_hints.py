@@ -28,6 +28,26 @@ def run_cli(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _drive_through_green(tmp_path: Path, task_dir: Path) -> None:
+    """Push a task draft -> planned -> red -> green, planting the
+    sprint-017 TASK-002 runner PASS marker right before the red->green
+    transition so the gate doesn't block CLI-driven test helpers."""
+    from conftest import plant_test_pass_marker
+
+    for to_status in ("planned", "red"):
+        r = run_cli(
+            ["advance-status", "--task-dir", str(task_dir), "--to-status", to_status],
+            cwd=tmp_path,
+        )
+        assert r.returncode == 0, r.stderr
+    plant_test_pass_marker(task_dir)
+    r = run_cli(
+        ["advance-status", "--task-dir", str(task_dir), "--to-status", "green"],
+        cwd=tmp_path,
+    )
+    assert r.returncode == 0, r.stderr
+
+
 def workflow_root(tmp_path: Path) -> Path:
     return tmp_path / "demo-app" / ".theking" / "workflows" / "demo-app"
 
@@ -124,12 +144,7 @@ def test_advance_status_illegal_transition_lists_allowed_moves(tmp_path: Path) -
     # Attempt green -> ready_to_merge (illegal; must go through in_review).
     # First push the task to green legally so the test exercises the green
     # outgoing edge, not draft.
-    for to_status in ("planned", "red", "green"):
-        r = run_cli(
-            ["advance-status", "--task-dir", str(task_dir), "--to-status", to_status],
-            cwd=tmp_path,
-        )
-        assert r.returncode == 0, r.stderr
+    _drive_through_green(tmp_path, task_dir)
 
     r = run_cli(
         [
@@ -156,11 +171,7 @@ def test_advance_status_illegal_transition_lists_allowed_moves(tmp_path: Path) -
 
 def test_advance_status_hint_points_at_init_review_round_for_green(tmp_path: Path) -> None:
     task_dir = bootstrap_sprint_with_task(tmp_path)
-    for to_status in ("planned", "red", "green"):
-        run_cli(
-            ["advance-status", "--task-dir", str(task_dir), "--to-status", to_status],
-            cwd=tmp_path,
-        )
+    _drive_through_green(tmp_path, task_dir)
     r = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", "done"],
         cwd=tmp_path,
@@ -176,11 +187,7 @@ def test_advance_status_hint_points_at_init_review_round_for_green(tmp_path: Pat
 
 
 def _drive_task_to_in_review(tmp_path: Path, task_dir: Path) -> None:
-    for to_status in ("planned", "red", "green"):
-        run_cli(
-            ["advance-status", "--task-dir", str(task_dir), "--to-status", to_status],
-            cwd=tmp_path,
-        )
+    _drive_through_green(tmp_path, task_dir)
     r = run_cli(
         ["init-review-round", "--task-dir", str(task_dir)],
         cwd=tmp_path,

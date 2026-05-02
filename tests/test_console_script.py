@@ -179,6 +179,10 @@ def test_workflowctl_console_script_runs_minimal_task_workflow(tmp_path: Path) -
         "--to-status",
         "red",
     ])
+    # sprint-017 TASK-002: plant a runner PASS marker before red->green.
+    from conftest import plant_test_pass_marker
+
+    plant_test_pass_marker(task_dir)
     green_result = run_console_cli([
         "advance-status",
         "--task-dir",

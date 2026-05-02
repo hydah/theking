@@ -91,6 +91,12 @@ def set_task_status(
         count=1,
     )
     task_md.write_text(content, encoding="utf-8")
+    # sprint-017 TASK-002: fast-forwarding through green requires a
+    # runner PASS marker so init-review-round's gate still passes.
+    if status == "green" or "green" in history:
+        from conftest import plant_test_pass_marker
+
+        plant_test_pass_marker(task_md.parent)
 
 
 def bootstrap_project_and_sprint(tmp_path: Path) -> Path:
@@ -154,9 +160,16 @@ def advance(tmp_path: Path, task_dir: Path, to: str) -> None:
     if to == "ready_to_merge" and not (evidence.exists() and evidence.stat().st_size > 0):
         evidence.parent.mkdir(parents=True, exist_ok=True)
         evidence.write_text(
-            "pytest run ok: happy path passes, error path passes, regression clean\n",
+            "$ uv run --with pytest pytest tests -q\n"
+            "pytest run ok: happy path passes, error path passes, regression clean\n"
+            "Exit: 0\n",
             encoding="utf-8",
         )
+    # sprint-017 TASK-002: red->green needs a runner PASS marker.
+    if to == "green":
+        from conftest import plant_test_pass_marker
+
+        plant_test_pass_marker(task_dir)
     r = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", to],
         cwd=tmp_path,

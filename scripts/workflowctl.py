@@ -80,13 +80,14 @@ try:
         slugify,
         stringify,
         task_requires_security_review,
+        validate_handoff_evidence_anchors,
         validate_sprint_dir,
         validate_sprint_location,
         validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
         validate_task_goal,
-        validate_handoff_evidence_anchors,
+        validate_test_pass_marker,
         write_if_missing,
         write_task_document,
     )
@@ -162,13 +163,14 @@ except ImportError:
         slugify,
         stringify,
         task_requires_security_review,
+        validate_handoff_evidence_anchors,
         validate_sprint_dir,
         validate_sprint_location,
         validate_sprint_smoke_evidence,
         validate_task_contract,
         validate_task_dir,
         validate_task_goal,
-        validate_handoff_evidence_anchors,
+        validate_test_pass_marker,
         write_if_missing,
         write_task_document,
     )
@@ -182,6 +184,25 @@ DEACTIVATE_PROJECT_DIR_ARGUMENT_HELP = (
     "Project root or .theking directory for the target project. Pass --project-dir .theking if you only have the workflow path."
 )
 ROOT_ARGUMENT_HELP = "Project parent directory containing <project-slug>. Backward-compatible option."
+
+
+def _require_test_pass_marker(task_data: dict[str, object], task_paths) -> None:
+    """sprint-017 TASK-002: enforce validate_test_pass_marker on every
+    verification_profile dir before the red->green or green->in_review
+    transition. Mechanical flow (which skips the red state entirely) is
+    unaffected — this helper only runs on transitions that pass through
+    it."""
+    verification_profile = task_data.get("verification_profile")
+    if not isinstance(verification_profile, list):
+        return
+    for profile in verification_profile:
+        normalized = normalize_execution_profile(stringify(profile))
+        profile_dir = task_paths.verification_dir / execution_profile_dir(normalized)
+        if not profile_dir.is_dir():
+            # Missing profile dirs surface via validate_verification_layout
+            # elsewhere; don't double-error here.
+            continue
+        validate_test_pass_marker(profile_dir)
 PROJECT_SLUG_ARGUMENT_HELP = "Project slug in kebab-case. Usually the project directory name."
 CHECKPOINT_FLOW_CHOICES = ("full", "lightweight")
 
@@ -798,6 +819,14 @@ def handle_advance_status(args: argparse.Namespace) -> None:
     if requested_status == "red" and stringify(task_data["status"]) == "planned":
         validate_handoff_evidence_anchors(task_paths.task_dir / "handoff.md")
 
+    # sprint-017 TASK-002: test-runner PASS marker gate on red->green and
+    # green->in_review. init-review-round owns the green->in_review path
+    # and re-runs this gate there. advance-status red->green fires here
+    # so the gap between "writes code" and "claims tests pass" gets a
+    # machine check.
+    if requested_status == "green" and stringify(task_data["status"]) == "red":
+        _require_test_pass_marker(task_data, task_paths)
+
     updated_task = apply_status_transition(task_data, requested_status)
 
     try:
@@ -837,6 +866,14 @@ def handle_init_review_round(args: argparse.Namespace) -> None:
             f"Current status: {current_status}. "
             f"Hint: {STATUS_NEXT_STEP_HINTS.get(current_status, 'advance status first')}"
         )
+
+    # sprint-017 TASK-002: pass-marker gate on green->in_review. Only
+    # fires when coming from green (not changes_requested — round 002+
+    # already went through green->in_review on round 001 and the fixup
+    # cycle routes changes_requested -> red -> green, which picks the
+    # gate up via handle_advance_status again).
+    if current_status == "green":
+        _require_test_pass_marker(task_data, task_paths)
 
     updated_task = apply_status_transition(task_data, "in_review")
     round_number = int(updated_task["current_review_round"])

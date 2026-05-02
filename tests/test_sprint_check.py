@@ -109,6 +109,23 @@ def set_task_status(task_md: Path, *, status: str, history: list[str], current_r
     )
     content = re.sub(r"current_review_round: \d+", f"current_review_round: {current_review_round}", content, count=1)
     task_md.write_text(content, encoding="utf-8")
+    # sprint-017 TASK-002: any task fast-forwarded through green needs a
+    # runner PASS marker so init-review-round's gate passes. Read the
+    # verification_profile list from task.md and plant into every
+    # declared profile dir. Idempotent.
+    if status == "green" or "green" in history:
+        from conftest import plant_test_pass_marker
+
+        for profile_line in re.findall(r"^  - (backend\.\w+|web\.\w+)$", content, re.MULTILINE):
+            short = {
+                "backend.cli": "cli",
+                "backend.http": "http",
+                "backend.job": "job",
+                "web.browser": "browser",
+            }.get(profile_line)
+            if short is None:
+                continue
+            plant_test_pass_marker(task_md.parent, profile=short)
 
 
 def advance_task_to_done(task_dir: Path, cwd: Path) -> None:

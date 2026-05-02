@@ -92,10 +92,18 @@ def _advance(project_dir: Path, task_dir: Path, to: str) -> None:
         evidence = task_dir / "verification" / "cli" / "test.log"
         evidence.parent.mkdir(parents=True, exist_ok=True)
         if not evidence.exists():
+            # sprint-017 TASK-001: shape gate needs Command: + Exit: anchors.
             evidence.write_text(
-                "pytest run ok: happy path passes, error path passes, regression clean\n",
+                "$ uv run --with pytest pytest tests -q\n"
+                "pytest run ok: happy path passes, error path passes, regression clean\n"
+                "Exit: 0\n",
                 encoding="utf-8",
             )
+    # sprint-017 TASK-002: red->green needs a runner PASS marker.
+    if to == "green":
+        from conftest import plant_test_pass_marker
+
+        plant_test_pass_marker(task_dir)
     r = _run(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", to],
         cwd=project_dir,
