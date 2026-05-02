@@ -235,3 +235,130 @@ def write_decree_checkpoint(
 
     checkpoint_path.write_text("\n".join(checkpoint_lines), encoding="utf-8")
     return checkpoint_path
+
+
+# --- sprint-019 TASK-005: append-only action ledger -------------------------
+
+import hashlib as _hashlib
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
+
+
+def _entry_serialize_for_hash(entry: dict) -> bytes:
+    filtered = {k: v for k, v in entry.items() if k != "prev_hash"}
+    return _json.dumps(filtered, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def compute_entry_hash(entry: dict) -> str:
+    """sprint-019 TASK-005: sha256 hex digest of an entry (excluding prev_hash)."""
+    return _hashlib.sha256(_entry_serialize_for_hash(entry)).hexdigest()
+
+
+def _current_git_head(project_dir: Path) -> str:
+    if _shutil.which("git") is None:
+        return "unknown"
+    git_root = project_dir
+    if not (git_root / ".git").exists():
+        ancestor = git_root
+        while ancestor.parent != ancestor:
+            if (ancestor / ".git").exists():
+                git_root = ancestor
+                break
+            ancestor = ancestor.parent
+        else:
+            return "unknown"
+    try:
+        r = _subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=git_root, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return "unknown"
+    if r.returncode != 0:
+        return "unknown"
+    return r.stdout.strip() or "unknown"
+
+
+def _staged_diff_summary(project_dir: Path) -> dict:
+    if _shutil.which("git") is None:
+        return {"file_count": 0, "file_hash": "unknown"}
+    try:
+        r = _subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=project_dir, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return {"file_count": 0, "file_hash": "unknown"}
+    if r.returncode != 0:
+        return {"file_count": 0, "file_hash": "unknown"}
+    paths = sorted(line for line in r.stdout.splitlines() if line.strip())
+    h = _hashlib.sha256("\n".join(paths).encode("utf-8")).hexdigest()
+    return {"file_count": len(paths), "file_hash": h}
+
+
+def ledger_path(task_dir: Path) -> Path:
+    return task_dir / "ledger.jsonl"
+
+
+def append_ledger_entry(task_dir: Path, event: dict) -> dict:
+    """sprint-019 TASK-005: append a JSON line with chain-hash to ledger.jsonl."""
+    task_dir.mkdir(parents=True, exist_ok=True)
+    path = ledger_path(task_dir)
+
+    prev_hash = "genesis"
+    if path.exists():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for line in reversed(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    last = _json.loads(line)
+                    prev_hash = compute_entry_hash(last)
+                    break
+                except _json.JSONDecodeError:
+                    continue
+        except OSError:
+            prev_hash = "genesis"
+
+    project_dir = task_dir
+    for _ in range(12):
+        if (project_dir / ".theking").exists():
+            break
+        if project_dir.parent == project_dir:
+            break
+        project_dir = project_dir.parent
+
+    full_entry = {
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        **event,
+        "git_head": _current_git_head(project_dir),
+        "staged_diff_summary": _staged_diff_summary(project_dir),
+        "prev_hash": prev_hash,
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(_json.dumps(full_entry, ensure_ascii=False) + "\n")
+    return full_entry
+
+
+def read_ledger(task_dir: Path) -> list[dict]:
+    """Return all ledger entries; malformed lines become {"_error": ...} markers."""
+    path = ledger_path(task_dir)
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    for lineno, raw in enumerate(lines, start=1):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            out.append(_json.loads(raw))
+        except _json.JSONDecodeError as exc:
+            out.append({"_error": f"line {lineno}: {exc.msg}", "_raw": raw})
+    return out

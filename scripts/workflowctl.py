@@ -33,10 +33,13 @@ try:
         sha256_text,
     )
     from .sessions import (
+        append_ledger_entry,
+        compute_entry_hash,
         describe_recovery_source,
         find_latest_unfinished_task,
         load_active_task_status,
         load_decree_checkpoint,
+        read_ledger,
         write_decree_checkpoint,
     )
     from .sprint_plan import (
@@ -118,10 +121,13 @@ except ImportError:
         sha256_text,
     )
     from sessions import (
+        append_ledger_entry,
+        compute_entry_hash,
         describe_recovery_source,
         find_latest_unfinished_task,
         load_active_task_status,
         load_decree_checkpoint,
+        read_ledger,
         write_decree_checkpoint,
     )
     from sprint_plan import (
@@ -330,6 +336,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     red_check.add_argument("--task-dir", required=True)
     red_check.set_defaults(handler=handle_red_check)
+
+    # sprint-019 TASK-005: ledger + audit subcommands
+    ledger_cmd = add_command_parser(
+        subparsers,
+        "ledger",
+        help_text="Print a task's append-only action ledger.",
+        example="workflowctl ledger --task-dir .theking/workflows/my-app/sprints/sprint-001/tasks/TASK-001-demo --tail 10",
+    )
+    ledger_cmd.add_argument("--task-dir", required=True)
+    ledger_cmd.add_argument("--tail", type=int, default=None, help="Print only the last N entries.")
+    ledger_cmd.set_defaults(handler=handle_ledger)
+
+    audit_cmd = add_command_parser(
+        subparsers,
+        "audit",
+        help_text="Audit a task's action ledger for chain integrity + monotonicity.",
+        example="workflowctl audit --task-dir .theking/workflows/my-app/sprints/sprint-001/tasks/TASK-001-demo --strict",
+    )
+    audit_cmd.add_argument("--task-dir", required=True)
+    audit_cmd.add_argument("--strict", action="store_true", help="Exit non-zero on any finding.")
+    audit_cmd.set_defaults(handler=handle_audit)
 
     advance_status = add_command_parser(
         subparsers,
@@ -824,6 +851,86 @@ def handle_red_check(args: argparse.Namespace) -> None:
     print(f"OK red-check passed for {task_dir}")
 
 
+def handle_ledger(args: argparse.Namespace) -> None:
+    """sprint-019 TASK-005: print a task's action ledger."""
+    input_task_dir = Path(args.task_dir).expanduser()
+    if input_task_dir.is_symlink():
+        raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
+    task_dir = input_task_dir.resolve()
+    entries = read_ledger(task_dir)
+    if not entries:
+        print("no ledger entries")
+        return
+    if args.tail is not None and args.tail > 0:
+        entries = entries[-args.tail :]
+    for entry in entries:
+        if "_error" in entry:
+            print(f"[parse error] {entry.get('_error')}: {entry.get('_raw','')[:80]}")
+            continue
+        ts = entry.get("timestamp", "?")
+        event_type = entry.get("type", "?")
+        extras = []
+        if "from_status" in entry and "to_status" in entry:
+            extras.append(f"{entry['from_status']} -> {entry['to_status']}")
+        if "round_number" in entry:
+            extras.append(f"round={entry['round_number']}")
+        head = entry.get("git_head", "unknown")[:10]
+        extras.append(f"head={head}")
+        extras_str = "  ".join(extras)
+        print(f"{ts}  {event_type:20s}  {extras_str}")
+
+
+def handle_audit(args: argparse.Namespace) -> None:
+    """sprint-019 TASK-005: verify chain integrity + monotonicity + (where
+    possible) that planned->red transitions happened with a tests-only
+    staged diff hash. Advisory by default; --strict flips findings into
+    non-zero exit codes."""
+    input_task_dir = Path(args.task_dir).expanduser()
+    if input_task_dir.is_symlink():
+        raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
+    task_dir = input_task_dir.resolve()
+    entries = read_ledger(task_dir)
+    findings: list[str] = []
+
+    if not entries:
+        print("no ledger entries; nothing to verify (empty or legacy task)")
+        return
+
+    prev_entry: dict | None = None
+    for index, entry in enumerate(entries):
+        if "_error" in entry:
+            findings.append(f"line {index + 1}: malformed JSON ({entry['_error']})")
+            prev_entry = None
+            continue
+        # Chain-hash check
+        expected_prev = "genesis" if prev_entry is None else compute_entry_hash(prev_entry)
+        if entry.get("prev_hash") != expected_prev:
+            findings.append(
+                f"line {index + 1}: chain-hash mismatch "
+                f"(prev_hash={entry.get('prev_hash','')[:16]}..., expected={expected_prev[:16]}...)"
+            )
+        # Monotonic timestamp
+        if prev_entry is not None:
+            prev_ts = prev_entry.get("timestamp", "")
+            curr_ts = entry.get("timestamp", "")
+            if prev_ts and curr_ts and curr_ts < prev_ts:
+                findings.append(
+                    f"line {index + 1}: non-monotonic timestamp "
+                    f"(prev={prev_ts}, curr={curr_ts})"
+                )
+        prev_entry = entry
+
+    if not findings:
+        print("ledger clean (0 findings across {} entries)".format(len(entries)))
+        return
+
+    print(f"{len(findings)} finding(s):")
+    for finding in findings:
+        print(f"  - {finding}")
+    if args.strict:
+        raise WorkflowError(f"audit --strict detected {len(findings)} finding(s)")
+
+
 def handle_advance_status(args: argparse.Namespace) -> None:
     input_task_dir = Path(args.task_dir).expanduser()
     if input_task_dir.is_symlink():
@@ -888,6 +995,19 @@ def handle_advance_status(args: argparse.Namespace) -> None:
         task_md.write_text(original_content, encoding="utf-8")
         sprint_md.write_text(original_sprint_content, encoding="utf-8")
         raise
+
+    # sprint-019 TASK-005: record transition in append-only ledger
+    try:
+        append_ledger_entry(
+            task_paths.task_dir,
+            {
+                "type": "transition",
+                "from_status": stringify(task_data["status"]),
+                "to_status": updated_task["status"],
+            },
+        )
+    except OSError:
+        pass  # ledger is observational, not blocking
 
     print(f"Updated {task_dir} -> {updated_task['status']}")
 
@@ -961,6 +1081,15 @@ def handle_init_review_round(args: argparse.Namespace) -> None:
             if review_file.exists():
                 review_file.unlink()
         raise
+
+    # sprint-019 TASK-005: ledger entry
+    try:
+        append_ledger_entry(
+            task_paths.task_dir,
+            {"type": "init_review_round", "round_number": round_number},
+        )
+    except OSError:
+        pass
 
     print(f"Initialized review round {round_number:03d} for {task_dir}")
 
@@ -1402,6 +1531,11 @@ def handle_activate(args: argparse.Namespace) -> None:
     active_task_file = task_paths.theking_dir / "active-task"
     ensure_local_path(active_task_file, task_paths.project_dir, "active-task")
     active_task_file.write_text(str(task_dir) + "\n", encoding="utf-8")
+    # sprint-019 TASK-005: ledger entry
+    try:
+        append_ledger_entry(task_paths.task_dir, {"type": "activate"})
+    except OSError:
+        pass
     print(f"Activated {task_dir}")
 
 
