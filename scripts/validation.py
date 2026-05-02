@@ -2122,6 +2122,129 @@ def validate_sprint_smoke_evidence(sprint_dir: Path) -> None:
         )
 
 
+# --- Reviewer independence declaration (sprint-019 TASK-004) --------------
+#
+# Review round files declare who reviewed the diff ("Reviewer:") and what
+# level of independence that review had ("Reviewer independence: self |
+# subagent-via-task-tool | subagent-via-cli | main-agent-fallback"). When
+# the main agent self-audits (self or main-agent-fallback), a Self-audit
+# checklist with >= 10 top-level bullets is required to compensate for
+# the missing adversarial pressure of an independent reviewer.
+#
+# Legacy reviews without the field(s) silent-pass (pre-sprint-019).
+
+
+ALLOWED_REVIEWER_INDEPENDENCE = frozenset({
+    "self",
+    "subagent-via-task-tool",
+    "subagent-via-cli",
+    "main-agent-fallback",
+})
+_REVIEWER_INDEPENDENCE_REQUIRE_CHECKLIST = frozenset({"self", "main-agent-fallback"})
+REVIEWER_SELF_AUDIT_MIN_POINTS = 10
+
+
+def _extract_review_field(text: str, key: str) -> str | None:
+    """Extract a `- {key}: <value>` bullet from the review file,
+    case-insensitive on the key. Returns None if absent or placeholder."""
+    pat = re.compile(
+        rf"(?im)^-\s*{re.escape(key)}\s*:\s*(.+?)\s*$"
+    )
+    m = pat.search(text)
+    if m is None:
+        return None
+    value = m.group(1).strip()
+    # Treat the template placeholders (<name>, <self | ... | main-agent-fallback>)
+    # as "not filled in" so downstream callers can decide whether that is
+    # legacy-silent-pass or a hard error.
+    if value.startswith("<") and value.endswith(">"):
+        return None
+    if not value:
+        return None
+    return value
+
+
+def _count_top_level_bullets_under_heading(
+    text: str, heading_prefix: str
+) -> int:
+    """Count top-level `- ` / `* ` / `N. ` bullets under the first
+    heading that starts with `heading_prefix` (e.g. 'Self-audit checklist').
+    Stops at the next # or ## heading. Ignores single-line HTML comments
+    and indented (nested) bullets."""
+    lines = text.splitlines()
+    in_section = False
+    count = 0
+    for raw in lines:
+        stripped = raw.strip()
+        if not in_section:
+            if stripped.startswith("## ") and heading_prefix.lower() in stripped.lower():
+                in_section = True
+            continue
+        # Leave the section at the next heading
+        if stripped.startswith("## ") or stripped.startswith("# "):
+            break
+        # Skip pure HTML-comment lines
+        if stripped.startswith("<!--") or stripped.startswith("-->"):
+            continue
+        # Only top-level bullets count (no leading spaces before marker)
+        leading = len(raw) - len(raw.lstrip(" "))
+        if leading > 0:
+            continue
+        if re.match(r"^(?:[-*+]\s+\S|\d+[.)]\s+\S)", raw):
+            count += 1
+    return count
+
+
+def validate_reviewer_declaration(review_md_path: Path) -> None:
+    """Enforce Reviewer / Reviewer independence fields on review-round
+    markdown files. Silent-pass for legacy files without the fields.
+
+    When independence is 'self' or 'main-agent-fallback', require at
+    least REVIEWER_SELF_AUDIT_MIN_POINTS top-level bullets under the
+    `## Self-audit checklist` heading. Prevents the sprint-017 偏差 C
+    pattern where an agent self-reviews with a terse "no findings" and
+    no actual audit work.
+    """
+    if not review_md_path.exists():
+        return
+    try:
+        text = review_md_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+
+    reviewer = _extract_review_field(text, "Reviewer")
+    independence = _extract_review_field(text, "Reviewer independence")
+
+    if reviewer is None and independence is None:
+        return  # legacy review — silent pass
+
+    if independence is None:
+        raise WorkflowError(
+            f"{review_md_path.name}: 'Reviewer:' declared but "
+            "'Reviewer independence:' missing. Add one of: "
+            f"{', '.join(sorted(ALLOWED_REVIEWER_INDEPENDENCE))}."
+        )
+    if independence not in ALLOWED_REVIEWER_INDEPENDENCE:
+        raise WorkflowError(
+            f"{review_md_path.name}: Reviewer independence "
+            f"{independence!r} is not in the allowed set "
+            f"{sorted(ALLOWED_REVIEWER_INDEPENDENCE)}."
+        )
+    if independence in _REVIEWER_INDEPENDENCE_REQUIRE_CHECKLIST:
+        observed = _count_top_level_bullets_under_heading(
+            text, "Self-audit checklist"
+        )
+        if observed < REVIEWER_SELF_AUDIT_MIN_POINTS:
+            raise WorkflowError(
+                f"{review_md_path.name}: Reviewer independence is "
+                f"{independence!r}, which requires a Self-audit checklist "
+                f"with >= {REVIEWER_SELF_AUDIT_MIN_POINTS} top-level "
+                f"bullets; found {observed}. Add more checklist items, "
+                "or raise independence to 'subagent-via-task-tool' if an "
+                "independent subagent reviewed this round."
+            )
+
+
 def ensure_review_pair(review_dir: Path, review_type: str, round_number: int) -> None:
     base_name = f"{review_type}-review-round-{round_number:03d}"
     review_file = review_dir / f"{base_name}.md"
@@ -2129,6 +2252,11 @@ def ensure_review_pair(review_dir: Path, review_type: str, round_number: int) ->
 
     ensure_review_artifact(review_file, "review")
     ensure_review_artifact(resolved_file, "resolved review")
+    # sprint-019 TASK-004: review files may declare Reviewer +
+    # Reviewer independence; when the main agent self-audits, a
+    # >= 10-point checklist is required. Silent-pass for legacy
+    # reviews without the fields.
+    validate_reviewer_declaration(review_file)
     # Sprint-010 TASK-001: harden resolved coverage once the round is paired.
     # Runs only when review + resolved both exist; legacy (no `### finding-`
     # header) files skip the gate transparently.

@@ -1,7 +1,40 @@
 // theking hook: check that active task has spec.md before allowing code edits
 // Usage: piped from Claude Code PreToolUse hook via stdin (JSON)
+//
+// sprint-019 TASK-004: upgraded the "no active-task" branch from warn+pass
+// to BLOCK(exit 1) when the target filePath is production code. Tests and
+// .theking/ edits still pass through (they're allowed without an active
+// task — tests/ may be scratch work, .theking/ is governance metadata).
 const fs = require('fs');
 const path = require('path');
+
+// Path classifier mirror of scripts/validation.py::classify_diff_path.
+// Returns 'test' | 'metadata' | 'production' | 'other'.
+function classifyPath(rel) {
+  const p = (rel || '').replace(/\\/g, '/');
+  if (!p) return 'other';
+  // metadata first — strongest prefix signals
+  if (/^\.theking\//.test(p)) return 'metadata';
+  if (/^\.claude\//.test(p)) return 'metadata';
+  if (/^\.codebuddy\//.test(p)) return 'metadata';
+  if (/^\.kimi\//.test(p)) return 'metadata';
+  if (/^\.github\//.test(p)) return 'metadata';
+  // tests
+  if (/^tests\//.test(p)) return 'test';
+  if (/(^|\/)conftest\.py$/.test(p)) return 'test';
+  if (/(^|\/)test_[^/]+\.(py|ts|tsx|js|jsx)$/.test(p)) return 'test';
+  if (/(^|\/)[^/]+_test\.(py|go|ts|tsx|js|jsx)$/.test(p)) return 'test';
+  if (/(^|\/)[^/]+\.test\.(ts|tsx|js|jsx)$/.test(p)) return 'test';
+  if (/(^|\/)[^/]+\.spec\.(ts|tsx|js|jsx)$/.test(p)) return 'test';
+  // production: extension-based
+  const prodExts = ['.py', '.ts', '.tsx', '.js', '.jsx', '.go', '.rs',
+                    '.java', '.c', '.h', '.cpp', '.hpp', '.cs', '.swift',
+                    '.kt', '.rb', '.php'];
+  for (const ext of prodExts) {
+    if (p.endsWith(ext)) return 'production';
+  }
+  return 'other';
+}
 
 let data = '';
 process.stdin.on('data', chunk => data += chunk);
@@ -9,9 +42,11 @@ process.stdin.on('end', () => {
   try {
     const input = JSON.parse(data);
     const filePath = input.tool_input?.file_path || '';
+    const category = classifyPath(filePath);
 
-    // Skip non-source-code edits
-    if (filePath.includes('.theking/') || filePath.includes('.claude/') || filePath.includes('/test')) {
+    // Always let tests and metadata edits through (they're allowed
+    // without an active task).
+    if (category === 'test' || category === 'metadata' || !filePath) {
       process.stdout.write(data);
       return;
     }
@@ -37,9 +72,16 @@ process.stdin.on('end', () => {
 
     const activeTaskFile = path.join(thekingDir, 'active-task');
     if (!fs.existsSync(activeTaskFile)) {
-      process.stderr.write('[theking] No active task set. Run: workflowctl activate --task-dir <path>\n');
-      process.stdout.write(data);
-      return;
+      // sprint-019 TASK-004: upgraded from warn+pass to BLOCK when the
+      // target is production code. No active task means no spec means
+      // no sprint — writing production code here violates hard rule #1.
+      process.stderr.write('[theking] BLOCKED: No active task. Run:\n');
+      process.stderr.write('[theking]   workflowctl ensure --project-dir . --project-slug <slug>\n');
+      process.stderr.write('[theking]   workflowctl init-sprint --project-dir . --project-slug <slug> --theme <theme>\n');
+      process.stderr.write('[theking]   workflowctl init-task --project-dir . --project-slug <slug> --sprint <sprint> --slug <slug> --title <title> --task-type <type>\n');
+      process.stderr.write('[theking]   workflowctl activate --task-dir <dir>\n');
+      process.stderr.write(`[theking] Blocked edit: ${filePath}\n`);
+      process.exit(1);
     }
 
     const taskDir = fs.readFileSync(activeTaskFile, 'utf-8').trim();

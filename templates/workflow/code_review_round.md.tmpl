@@ -3,6 +3,15 @@
 ## Context
 - Task: {task_id}
 - Summary: describe what changed in this round.
+- Reviewer: <name>
+- Reviewer independence: <self | subagent-via-task-tool | subagent-via-cli | main-agent-fallback>
+
+<!-- sprint-019 TASK-004: Reviewer independence declares who audited
+     the diff. When value is 'self' or 'main-agent-fallback', the
+     main agent is reviewing its own work — in that case a Self-audit
+     checklist with >= 10 top-level bullets is REQUIRED below (see
+     validate_reviewer_declaration). Preferred: 'subagent-via-task-tool'
+     where a separate code-reviewer subagent does the review. -->
 
 ## Findings
 
@@ -24,3 +33,15 @@
 <!-- Add additional findings as ### finding-002, ### finding-003, ...
      Ids do not need to be consecutive; the gate only checks that every id
      declared here is closed in the paired resolved file. -->
+
+## Self-audit checklist (>= 10 points; required when Reviewer independence: self or main-agent-fallback)
+
+<!-- When reviewer is the main agent itself, compensate for the loss of
+     adversarial pressure by enumerating at least 10 top-level checks
+     (e.g. "Scope adherence", "TDD integrity", "No opt-out flags",
+     "Error message quality", ...). Only top-level bullets count.
+     Nested bullets are permitted but don't contribute to the floor.
+
+     When Reviewer independence is subagent-via-task-tool or
+     subagent-via-cli, this section is optional. -->
+- 
