@@ -35,6 +35,7 @@ try:
     )
     from .doctor import (
         format_report_json,
+        format_report_summary,
         format_report_text,
         run_diagnostics,
     )
@@ -115,6 +116,7 @@ except ImportError:
     )
     from doctor import (
         format_report_json,
+        format_report_summary,
         format_report_text,
         run_diagnostics,
     )
@@ -481,6 +483,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="json_output",
         help="Emit findings as JSON (errors/warnings/info/summary).",
+    )
+    doctor.add_argument(
+        "--summary",
+        action="store_true",
+        dest="summary_output",
+        help="Emit a concise aggregated summary (TL;DR + per-category counts + open tasks).",
     )
     doctor.set_defaults(handler=handle_doctor)
 
@@ -1475,6 +1483,8 @@ def handle_doctor(args: argparse.Namespace) -> None:
     report = run_diagnostics(project_dir, project_slug)
     if getattr(args, "json_output", False):
         print(format_report_json(report))
+    elif getattr(args, "summary_output", False):
+        print(format_report_summary(report))
     else:
         print(format_report_text(report))
     sys.exit(report.exit_code())

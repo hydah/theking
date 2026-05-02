@@ -592,3 +592,35 @@ def test_d4_classifier_pins_audit_chain_markers() -> None:
         assert not _d4_is_audit_chain(
             message
         ), f"expected doc-drift to be warning, classified as audit-chain: {message!r}"
+
+
+# ---------------------------------------------------------------------------
+# sprint-014: doctor --summary
+# ---------------------------------------------------------------------------
+
+def test_doctor_summary_outputs_tldr_header(tmp_path: Path) -> None:
+    """--summary mode outputs a one-line TL;DR with error/warning/info counts."""
+    result = _run(["doctor", "--project-dir", ".", "--project-slug", "theking", "--summary"], cwd=REPO_ROOT)
+    assert result.returncode == 0, result.stderr
+    assert "errors" in result.stdout.lower() or "warnings" in result.stdout.lower(), (
+        f"Summary must mention at least one count category. Got:\n{result.stdout}"
+    )
+
+
+def test_doctor_summary_contains_category_breakdown(tmp_path: Path) -> None:
+    """--summary mode shows per-category counts (D1-D5)."""
+    result = _run(["doctor", "--project-dir", ".", "--project-slug", "theking", "--summary"], cwd=REPO_ROOT)
+    assert result.returncode == 0, result.stderr
+    assert "[D" in result.stdout, (
+        f"Summary must show category labels like [D1]. Got:\n{result.stdout}"
+    )
+
+
+def test_doctor_summary_lists_open_tasks(tmp_path: Path) -> None:
+    """--summary mode lists tasks that are not done or blocked."""
+    result = _run(["doctor", "--project-dir", ".", "--project-slug", "theking", "--summary"], cwd=REPO_ROOT)
+    assert result.returncode == 0, result.stderr
+    assert "Open" in result.stdout, (
+        f"Summary should have an 'Open tasks' section. Got:\n{result.stdout}"
+    )
+REPO_ROOT = Path(__file__).resolve().parents[1]

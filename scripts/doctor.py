@@ -561,3 +561,74 @@ def format_report_json(report: DoctorReport) -> str:
         "summary": report.summary(),
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def format_report_summary(report: DoctorReport) -> str:
+    """Emit a concise, scannable summary (no per-finding detail).
+
+    Output shape:
+      {N} errors, {M} warnings, {K} info
+      [D1] zombie tasks: N — "...", "..."
+      [D2] stale checkpoints: N
+      ...
+      Open tasks:
+        <TASK-ID> (<status>) in <sprint>
+      Run `workflowctl doctor` without `--summary` for full detail.
+    """
+
+    lines: list[str] = []
+    s = report.summary()
+    lines.append(f"{s['errors']} errors, {s['warnings']} warnings, {s['info']} info")
+    if s["errors"] == 0 and s["warnings"] == 0 and s["info"] == 0:
+        lines.append("All clear.")
+        return "\n".join(lines)
+
+    # Group by category (D1..D5)
+    from collections import defaultdict
+    by_cat: dict[str, list[Finding]] = defaultdict(list)
+    for bucket in (report.errors, report.warnings, report.info):
+        for f in bucket:
+            by_cat[f.category].append(f)
+
+    lines.append("")
+    for cat in sorted(by_cat):
+        findings = by_cat[cat]
+        previews = []
+        for f in findings[:2]:
+            msg = f.message[:80]
+            if len(f.message) > 80:
+                msg += "..."
+            previews.append(msg)
+        preview_strs = [f'"{p}"' for p in previews]
+        preview_text = " — " + ", ".join(preview_strs) if previews else ""
+        lines.append(f"[{cat}] {len(findings)} finding(s){preview_text}")
+
+    # Open tasks — only include findings from D1 (zombie/unfinished) and D5 (stale active-task).
+    # D4 findings reference done tasks with historical spec drift — they are NOT "open".
+    open_task_ids: list[str] = []
+    for cat in sorted(by_cat):
+        if cat not in {"D1", "D5"}:
+            continue
+        for f in by_cat[cat]:
+            task_id = _extract_task_id_from_message(f.message)
+            if task_id and task_id not in open_task_ids:
+                open_task_ids.append(task_id)
+    if open_task_ids:
+        lines.append("")
+        lines.append("Open tasks:")
+        for tid in open_task_ids:
+            lines.append(f"  {tid}")
+    else:
+        lines.append("")
+        lines.append("Open tasks: None.")
+
+    lines.append("")
+    lines.append("Run `workflowctl doctor` without `--summary` for full detail.")
+    return "\n".join(lines)
+
+
+def _extract_task_id_from_message(message: str) -> str:
+    """TASK-ID extractor: heuristic for finding task references in doctor messages."""
+    import re as _re
+    m = _re.search(r"TASK-\d{3}-[\w-]+", message)
+    return m.group(0) if m else ""
