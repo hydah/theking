@@ -169,16 +169,19 @@ def test_new_task_with_legacy_spec_rejected(tmp_path: Path) -> None:
     """New task using legacy 2-section spec must be rejected."""
     spec = tmp_path / "spec.md"
     write(spec, LEGACY_SPEC)
-    with pytest.raises(WorkflowError, match=r"(?is)(section|spec)"):
-        validate_spec(spec, require_content=True, flow="full", task_is_new=True)
+    # Legacy-bypass path is: require_content=False + is_legacy_spec_structure.
+    # Before sprint-019 that path silently passed. For new tasks it now raises.
+    with pytest.raises(WorkflowError, match=r"(?is)(section|legacy|5-section)"):
+        validate_spec(spec, require_content=False, flow="full", task_is_new=True)
 
 
 def test_legacy_task_with_legacy_spec_still_passes(tmp_path: Path) -> None:
-    """Legacy task with legacy 2-section spec must pass — backward compat."""
+    """Legacy task with legacy 2-section spec must pass — backward compat.
+    Uses require_content=False so the legacy bypass path is exercised."""
     spec = tmp_path / "spec.md"
     write(spec, LEGACY_SPEC)
-    # Must not raise (legacy silent-pass preserved)
-    validate_spec(spec, require_content=True, flow="full", task_is_new=False)
+    # Must not raise (legacy silent-pass preserved on not require_content)
+    validate_spec(spec, require_content=False, flow="full", task_is_new=False)
 
 
 def test_new_task_with_full_spec_passes(tmp_path: Path) -> None:
@@ -188,11 +191,12 @@ def test_new_task_with_full_spec_passes(tmp_path: Path) -> None:
 
 
 def test_validate_spec_default_task_is_new_false(tmp_path: Path) -> None:
-    """Default task_is_new=False preserves existing behavior."""
+    """Default task_is_new=False preserves existing behavior on the
+    legacy-bypass path (require_content=False + 2-section spec)."""
     spec = tmp_path / "spec.md"
     write(spec, LEGACY_SPEC)
-    # Must not raise — default legacy path
-    validate_spec(spec, require_content=True, flow="full")
+    # Must not raise — default legacy path on not-require-content
+    validate_spec(spec, require_content=False, flow="full")
 
 
 def test_validate_spec_section_counts_new_task_legacy_spec_rejected(

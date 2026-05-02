@@ -265,6 +265,12 @@ def test_init_task_generated_spec_requires_author_input_before_red(tmp_path: Pat
     from conftest import populate_task_goal
 
     populate_task_goal(task_dir / "task.md")
+    # sprint-019 TASK-002: plant handoff anchor so the Scope-missing gate
+    # (the actual thing this test exercises) fires first, not the
+    # handoff gate.
+    from conftest import populate_handoff_anchor
+
+    populate_handoff_anchor(task_dir)
     planned_result = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", "planned"],
         cwd=tmp_path,

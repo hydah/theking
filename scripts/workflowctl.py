@@ -68,6 +68,7 @@ try:
         infer_execution_profile,
         infer_required_agents,
         infer_verification_profile,
+        is_new_theking_task,
         load_task_document,
         next_index,
         normalize_execution_profile,
@@ -151,6 +152,7 @@ except ImportError:
         infer_execution_profile,
         infer_required_agents,
         infer_verification_profile,
+        is_new_theking_task,
         load_task_document,
         next_index,
         normalize_execution_profile,
@@ -815,9 +817,14 @@ def handle_advance_status(args: argparse.Namespace) -> None:
             raise WorkflowError("Use init-review-round to enter in_review")
 
     # Handoff evidence anchor gate: only fires on planned->red.
-    # File-existence-first — legacy tasks without handoff.md are not punished.
+    # sprint-019 TASK-002: new tasks (theking_schema_version set) no
+    # longer get the legacy silent-pass on missing / empty handoff —
+    # they must carry real Phase 1 evidence before red.
     if requested_status == "red" and stringify(task_data["status"]) == "planned":
-        validate_handoff_evidence_anchors(task_paths.task_dir / "handoff.md")
+        validate_handoff_evidence_anchors(
+            task_paths.task_dir / "handoff.md",
+            task_is_new=is_new_theking_task(task_data),
+        )
 
     # sprint-017 TASK-002: test-runner PASS marker gate on red->green and
     # green->in_review. init-review-round owns the green->in_review path

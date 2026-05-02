@@ -155,6 +155,12 @@ def test_workflowctl_console_script_runs_minimal_task_workflow(tmp_path: Path) -
     from conftest import populate_task_goal
 
     populate_task_goal(task_dir / "task.md")
+    # sprint-019 TASK-002: plant handoff anchor so the Scope-missing
+    # assertion below (red_result expects that specific error) isn't
+    # displaced by the handoff gate.
+    from conftest import populate_handoff_anchor
+
+    populate_handoff_anchor(task_dir)
     planned_result = run_console_cli([
         "advance-status",
         "--task-dir",
@@ -172,6 +178,10 @@ def test_workflowctl_console_script_runs_minimal_task_workflow(tmp_path: Path) -
 
     write_complete_spec(task_dir)
 
+    # sprint-019 TASK-002: plant handoff anchor before the retry red.
+    from conftest import populate_handoff_anchor
+
+    populate_handoff_anchor(task_dir)
     retry_red_result = run_console_cli([
         "advance-status",
         "--task-dir",

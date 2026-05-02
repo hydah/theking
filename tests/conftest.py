@@ -85,3 +85,25 @@ def plant_test_pass_marker(
     profile_dir.mkdir(parents=True, exist_ok=True)
     (profile_dir / filename).write_text(marker, encoding="utf-8")
 
+
+# ---------------------------------------------------------------------------
+# sprint-019 TASK-002: tests that spin up a fresh task via init-task and
+# drive it through planned->red now hit the tightened handoff-anchor gate
+# (new tasks carry theking_schema_version, so empty handoff is rejected).
+# This helper populates handoff.md with a real file:line anchor so those
+# test fixtures keep working without disabling the new-task gate.
+# ---------------------------------------------------------------------------
+
+
+def populate_handoff_anchor(task_dir: Path, *, file_line: str = "scripts/validation.py:1 fixture anchor") -> None:
+    """Write a minimal handoff.md that satisfies validate_handoff_evidence_anchors
+    for new tasks. Idempotent."""
+    handoff = task_dir / "handoff.md"
+    handoff.write_text(
+        "# Task Handoff\n\n## Phase 1 Evidence Anchors\n\n"
+        "- Viewed code/tests/docs:\n"
+        f"  - {file_line}\n"
+        "- Impact surface:\n",
+        encoding="utf-8",
+    )
+

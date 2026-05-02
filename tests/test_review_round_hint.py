@@ -116,6 +116,13 @@ def _advance(tmp_path: Path, task_dir: Path, to: str) -> None:
     from conftest import populate_task_goal
 
     populate_task_goal(task_dir / "task.md")
+    # sprint-019 TASK-002: planned->red now demands a handoff file:line
+    # anchor for new tasks (those init-task creates post-sprint-019).
+    # Plant one idempotently before any planned->red transition.
+    if to == "red":
+        from conftest import populate_handoff_anchor
+
+        populate_handoff_anchor(task_dir)
     evidence = task_dir / "verification" / "cli" / "test.log"
     if to == "ready_to_merge" and not (evidence.exists() and evidence.stat().st_size > 0):
         evidence.parent.mkdir(parents=True, exist_ok=True)

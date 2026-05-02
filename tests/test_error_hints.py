@@ -31,15 +31,25 @@ def run_cli(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 def _drive_through_green(tmp_path: Path, task_dir: Path) -> None:
     """Push a task draft -> planned -> red -> green, planting the
     sprint-017 TASK-002 runner PASS marker right before the red->green
-    transition so the gate doesn't block CLI-driven test helpers."""
-    from conftest import plant_test_pass_marker
+    transition so the gate doesn't block CLI-driven test helpers.
 
-    for to_status in ("planned", "red"):
+    sprint-019 TASK-002: also plant a handoff file:line anchor before
+    planned->red since new tasks (init-task default post-sprint-019)
+    carry theking_schema_version and the gate is strict on them."""
+    from conftest import plant_test_pass_marker, populate_handoff_anchor
+
+    for to_status in ("planned",):
         r = run_cli(
             ["advance-status", "--task-dir", str(task_dir), "--to-status", to_status],
             cwd=tmp_path,
         )
         assert r.returncode == 0, r.stderr
+    populate_handoff_anchor(task_dir)
+    r = run_cli(
+        ["advance-status", "--task-dir", str(task_dir), "--to-status", "red"],
+        cwd=tmp_path,
+    )
+    assert r.returncode == 0, r.stderr
     plant_test_pass_marker(task_dir)
     r = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", "green"],

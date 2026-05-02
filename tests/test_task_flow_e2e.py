@@ -147,6 +147,11 @@ def advance_to_red(tmp_path: Path, task_dir: Path) -> subprocess.CompletedProces
     )
     if planned.returncode != 0:
         return planned
+    # sprint-019 TASK-002: planned->red requires handoff file:line anchor
+    # for new tasks (init-task default post-sprint-019).
+    from conftest import populate_handoff_anchor
+
+    populate_handoff_anchor(task_dir)
     return run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", "red"],
         cwd=tmp_path,

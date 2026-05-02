@@ -170,6 +170,11 @@ def advance(tmp_path: Path, task_dir: Path, to: str) -> None:
         from conftest import plant_test_pass_marker
 
         plant_test_pass_marker(task_dir)
+    # sprint-019 TASK-002: planned->red needs a handoff anchor for new tasks.
+    if to == "red":
+        from conftest import populate_handoff_anchor
+
+        populate_handoff_anchor(task_dir)
     r = run_cli(
         ["advance-status", "--task-dir", str(task_dir), "--to-status", to],
         cwd=tmp_path,

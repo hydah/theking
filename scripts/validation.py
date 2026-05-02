@@ -206,6 +206,7 @@ def validate_task_dir(task_dir: Path, *, check_goal: bool = False) -> None:
         task_paths.spec_md,
         require_content=spec_requires_content(validated["status_history"]),
         flow=normalize_task_flow(task_data.get("flow")),
+        task_is_new=is_new_theking_task(validated),
     )
     validate_review_requirements(task_paths.review_dir, validated)
     validate_agent_runs_ledger(task_paths.task_dir / "agent-runs.jsonl")
@@ -488,11 +489,16 @@ _EDGE_CASES_SUBSECTION_HEADERS = {
 }
 
 
-def validate_spec_section_counts(spec_md: Path, *, flow: str) -> None:
+def validate_spec_section_counts(
+    spec_md: Path, *, flow: str, task_is_new: bool = False
+) -> None:
     """Enforce per-flow minimum item counts on content-carrying spec sections.
 
     Legacy spec structure (only Acceptance + Test Plan) is preserved as a
-    bypass to match `validate_spec`'s backward-compat contract.
+    bypass to match `validate_spec`'s backward-compat contract **only for
+    legacy tasks**. sprint-019 TASK-002: new tasks (task_is_new=True) are
+    no longer allowed to use the 2-section legacy bypass — they must
+    carry a full 5-section spec.
 
     sprint-017 TASK-003: Edge Cases can be split into '### Failure modes'
     and '### Happy variants' subsections. When the new structure is
@@ -505,6 +511,13 @@ def validate_spec_section_counts(spec_md: Path, *, flow: str) -> None:
     spec_text = spec_md.read_text(encoding="utf-8")
     sections = collect_spec_sections(spec_text)
     if is_legacy_spec_structure(sections):
+        if task_is_new:
+            raise WorkflowError(
+                "spec.md uses the legacy 2-section structure (Acceptance + "
+                "Test Plan only), but this task is new (theking_schema_version "
+                "set). New tasks must use the full 5-section structure: "
+                "Scope, Non-Goals, Acceptance, Test Plan, Edge Cases."
+            )
         return
 
     thresholds = (
@@ -609,10 +622,21 @@ def validate_spec(
     *,
     require_content: bool,
     flow: str | None = None,
+    task_is_new: bool = False,
 ) -> None:
     spec_text = spec_md.read_text(encoding="utf-8")
     sections = collect_spec_sections(spec_text)
+    # sprint-019 TASK-002: legacy bypass only for legacy tasks. New tasks
+    # (task_is_new=True) must carry the full 5-section spec even when
+    # require_content=False (i.e. in draft/planned inspection calls).
     if not require_content and is_legacy_spec_structure(sections):
+        if task_is_new:
+            raise WorkflowError(
+                "spec.md uses the legacy 2-section structure but this task "
+                "is new (theking_schema_version set). New tasks require the "
+                "full 5-section structure: Scope, Non-Goals, Acceptance, "
+                "Test Plan, Edge Cases."
+            )
         return
 
     effective_flow = normalize_task_flow(flow) if flow else "full"
@@ -632,7 +656,7 @@ def validate_spec(
             raise WorkflowError(f"spec.md section must not be empty: {heading}")
 
     if require_content:
-        validate_spec_section_counts(spec_md, flow=flow or "full")
+        validate_spec_section_counts(spec_md, flow=flow or "full", task_is_new=task_is_new)
         validate_acceptance_traceability(spec_md)
 
 
@@ -1427,13 +1451,21 @@ HANDOFF_FILE_LINE_PATTERN = re.compile(r"\S+:\d+")
 HANDOFF_HTML_COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
-def validate_handoff_evidence_anchors(handoff_path: Path) -> None:
+def validate_handoff_evidence_anchors(
+    handoff_path: Path, *, task_is_new: bool = False
+) -> None:
     """Validate that handoff.md has at least one `file:line` anchor under
     either 'Viewed code/tests/docs' or 'Impact surface'.
 
-    File-existence-first: if the handoff file is absent, the gate silently
-    passes. This protects legacy tasks created before sprint-011 (which do
-    not own a handoff.md) from being punished by a new gate.
+    sprint-019 TASK-002: the silent-pass paths below are preserved for
+    **legacy** tasks (task_is_new=False, default). For **new** tasks
+    (task_is_new=True, detected via is_new_theking_task on frontmatter),
+    silent-pass is disabled — missing file or empty target sections
+    raise actionable errors so the author fills in Phase 1 evidence
+    before implementation code lands.
+
+    Default stays False so existing callers that haven't adopted the
+    kwarg retain legacy behavior (no sudden regressions).
 
     Scope: only scans the two target sections listed in
     HANDOFF_TARGET_SECTIONS. References buried in unrelated sections
@@ -1445,6 +1477,15 @@ def validate_handoff_evidence_anchors(handoff_path: Path) -> None:
     """
 
     if not handoff_path.exists():
+        if task_is_new:
+            raise WorkflowError(
+                "handoff.md is required for new tasks (those created under "
+                "sprint-019+ governance, carrying theking_schema_version). "
+                "This task declares a schema_version but has no handoff.md "
+                "on disk. Create one with real Phase 1 evidence under "
+                "'Viewed code/tests/docs' or 'Impact surface' (file:line "
+                "anchors required)."
+            )
         return
     if handoff_path.is_symlink():
         raise WorkflowError("handoff.md must not be a symlink")
@@ -1464,14 +1505,21 @@ def validate_handoff_evidence_anchors(handoff_path: Path) -> None:
         return
 
     # Treat an unpopulated scaffold (both target sections present but empty
-    # after stripping comments) as "not filled yet" — silent pass, same as
-    # a fully absent handoff.md. This lets test fixtures and fresh scaffolds
-    # move planned->red without being punished before the author has had a
-    # chance to fill Phase-1 notes. The gate only bites once the author has
-    # written *some* content under one of the target sections without a
-    # file:line anchor — that is the actual "partially filled, not evidenced"
-    # state we want to catch.
+    # after stripping comments) as "not filled yet".
+    # - Legacy task: silent pass, same as fully absent handoff.md.
+    # - New task: REJECT. sprint-019 closes this silent-pass hole because
+    #   an LLM main-agent happily ships tasks with empty Phase 1 notes
+    #   when it thinks the gate is off.
     if not _handoff_target_sections_have_any_content(stripped_content):
+        if task_is_new:
+            section_list = " or ".join(f"'{name}'" for name in HANDOFF_TARGET_SECTIONS)
+            raise WorkflowError(
+                "handoff.md target sections are empty (new task). "
+                f"A new task (theking_schema_version set) must fill "
+                f"{section_list} with at least one `file:line` evidence "
+                "anchor before planned->red. This is the 'sprint-019 "
+                "no-silent-pass-for-new-tasks' policy."
+            )
         return
 
     section_list = " or ".join(f"'{name}'" for name in HANDOFF_TARGET_SECTIONS)
