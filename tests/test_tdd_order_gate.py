@@ -34,7 +34,6 @@ from validation import (  # noqa: E402
     validate_red_transition_diff,
 )
 
-
 WORKFLOWCTL = REPO_ROOT / "scripts" / "workflowctl.py"
 
 

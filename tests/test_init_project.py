@@ -1242,9 +1242,53 @@ def test_init_project_settings_matchers_exclude_all_runtime_dirs(tmp_path: Path)
 
     assert result.returncode == 0, result.stderr
     for runtime_dir in (".claude", ".codebuddy"):
-        settings_raw = (tmp_path / "demo-app" / runtime_dir / "settings.json").read_text(encoding="utf-8")
-        assert "\\.claude/" in settings_raw
-        assert "\\.codebuddy/" in settings_raw
+        settings = json.loads((tmp_path / "demo-app" / runtime_dir / "settings.json").read_text(encoding="utf-8"))
+        hook_groups = settings["hooks"].values()
+        theking_matchers = [
+            hook["matcher"]
+            for hook_group in hook_groups
+            for hook in hook_group
+            if "[theking]" in hook.get("description", "")
+        ]
+        assert theking_matchers
+        for matcher in theking_matchers:
+            assert "\\.theking/" in matcher
+            assert "\\.claude/" in matcher
+            assert "\\.codebuddy/" in matcher
+
+
+def test_init_project_settings_matchers_cover_known_edit_tools_without_catch_all(tmp_path: Path) -> None:
+    result = run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    expected_tools = [
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "replace_in_file",
+        "write_to_file",
+    ]
+    unsupported_path_shapes = ["NotebookEdit"]
+    for runtime_dir in (".claude", ".codebuddy"):
+        settings = json.loads((tmp_path / "demo-app" / runtime_dir / "settings.json").read_text(encoding="utf-8"))
+        hook_groups = settings["hooks"].values()
+        theking_matchers = [
+            hook["matcher"]
+            for hook_group in hook_groups
+            for hook in hook_group
+            if "[theking]" in hook.get("description", "")
+        ]
+        assert len(theking_matchers) >= 3
+        for matcher in theking_matchers:
+            for tool_name in expected_tools:
+                assert f'tool == "{tool_name}"' in matcher
+            for tool_name in unsupported_path_shapes:
+                assert f'tool == "{tool_name}"' not in matcher
+            assert "tool matches" not in matcher
+            assert "tool !=" not in matcher
 
 
 def test_ensure_refreshes_github_exports_from_runtime_source(tmp_path: Path) -> None:

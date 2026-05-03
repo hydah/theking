@@ -6,12 +6,17 @@ These live outside :mod:`workflowctl` because they only depend on
 
 from __future__ import annotations
 
+import hashlib as _hashlib
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 try:
     from .constants import WorkflowError
+    from .sprint_plan import sprint_is_sealed
     from .validation import (
         derive_task_paths,
         ensure_file,
@@ -28,6 +33,7 @@ try:
     )
 except ImportError:
     from constants import WorkflowError
+    from sprint_plan import sprint_is_sealed
     from validation import (
         derive_task_paths,
         ensure_file,
@@ -115,7 +121,7 @@ def find_latest_unfinished_task(project_dir: Path, project_slug: str) -> dict[st
             try:
                 task_paths = derive_task_paths(task_dir)
                 task_data, _body = load_task_document(task_paths.task_md)
-            except WorkflowError:
+            except (OSError, WorkflowError):
                 continue
             if stringify(task_data["status"]) == "done":
                 continue
@@ -197,6 +203,47 @@ def describe_recovery_source(
     return "none"
 
 
+def checkpoint_references_completed_sprint(
+    project_dir: Path,
+    project_slug: str,
+    checkpoint: dict[str, Any] | None,
+) -> bool:
+    if checkpoint is None:
+        return False
+    sprint_value = stringify(checkpoint.get("sprint", "")).strip()
+    if not sprint_value:
+        return False
+
+    sprint_dir = get_workflow_project_dir(project_dir, project_slug) / "sprints" / sprint_value
+    if not sprint_dir.is_dir():
+        return False
+
+    sprint_md = sprint_dir / "sprint.md"
+    if sprint_md.is_file() and sprint_is_sealed(sprint_md):
+        return True
+
+    tasks_dir = sprint_dir / "tasks"
+    if not tasks_dir.is_dir():
+        return False
+
+    has_any_task = False
+    for task_dir in tasks_dir.iterdir():
+        if task_dir.is_symlink() or not task_dir.is_dir():
+            continue
+        task_md = task_dir / "task.md"
+        if not task_md.is_file():
+            return False
+        has_any_task = True
+        try:
+            task_data, _body = load_task_document(task_md)
+        except WorkflowError:
+            return False
+        if stringify(task_data.get("status", "")).strip() != "done":
+            return False
+
+    return has_any_task
+
+
 def write_decree_checkpoint(
     *,
     project_dir: Path,
@@ -238,12 +285,6 @@ def write_decree_checkpoint(
 
 
 # --- sprint-019 TASK-005: append-only action ledger -------------------------
-
-import hashlib as _hashlib
-import json as _json
-import shutil as _shutil
-import subprocess as _subprocess
-
 
 def _entry_serialize_for_hash(entry: dict) -> bytes:
     filtered = {k: v for k, v in entry.items() if k != "prev_hash"}

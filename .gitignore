@@ -10,7 +10,12 @@ dist/
 .codebuddy/
 .github/
 .kimi/
-.theking/
+.theking/*
+!.theking/context/
+.theking/context/*
+!.theking/context/adr/
+.theking/context/adr/*
+!.theking/context/adr/ADR-*.md
 
 # Runtime entry files projected by `workflowctl ensure` when theking is used
 # on itself (dogfooding). theking is the template source repo; these are

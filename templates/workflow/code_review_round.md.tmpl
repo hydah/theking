@@ -6,12 +6,12 @@
 - Reviewer: <name>
 - Reviewer independence: <self | subagent-via-task-tool | subagent-via-cli | main-agent-fallback>
 
-<!-- sprint-019 TASK-004: Reviewer independence declares who audited
-     the diff. When value is 'self' or 'main-agent-fallback', the
-     main agent is reviewing its own work — in that case a Self-audit
-     checklist with >= 10 top-level bullets is REQUIRED below (see
-     validate_reviewer_declaration). Preferred: 'subagent-via-task-tool'
-     where a separate code-reviewer subagent does the review. -->
+<!-- Reviewer independence declares who audited the diff. For new terminal
+     tasks, self and main-agent-fallback do not satisfy independent review;
+     use subagent-via-task-tool or subagent-via-cli and record matching
+     reviewer-agent provenance in agent-runs.jsonl. Legacy self/fallback
+     review still requires a Self-audit checklist with >= 10 top-level
+     bullets for compatibility with older artifacts. -->
 
 ## Findings
 

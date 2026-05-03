@@ -33,7 +33,9 @@ WORKFLOW_SKILL_PROJECTIONS = (
 )
 
 from scripts.constants import ALLOWED_TASK_TYPE_TOKENS
+from scripts.scaffold import build_runtime_template_vars
 from scripts.sprint_plan import parse_bundles, parse_plan_entries
+from scripts.validation import render_template
 
 
 def read_planner() -> str:
@@ -151,6 +153,37 @@ def test_workflow_skill_clarifies_resolved_no_new_changes_path() -> None:
         "workflow-governance skill must warn against opening an empty round 2; "
         "resolved-with-no-code-changes should advance directly to ready_to_merge"
     )
+
+
+def test_workflow_skill_projections_name_runtime_backed_gate_contracts() -> None:
+    required_terms = (
+        "runtime-backed gate contract",
+        "agent provenance",
+        "reviewer provenance",
+        "source identity",
+        "static gates",
+        "strict audit expectations",
+        "theking_schema_version: 1",
+        "required_agents",
+        "record-agent-run",
+        "--invocation-channel",
+        "subagent-via-task-tool",
+        "subagent-via-cli",
+    )
+    for path, text in read_workflow_skill_projections():
+        normalized = text.lower()
+        for term in required_terms:
+            assert term in normalized, f"{path} missing runtime gate term {term!r}"
+        assert "可选审计辅助" not in text, f"{path} must not use blanket optional ledger wording"
+
+
+def test_workflow_skill_template_and_projections_are_in_sync() -> None:
+    rendered = render_template(
+        "skill_workflow_governance.md.tmpl",
+        **build_runtime_template_vars("theking"),
+    )
+    for path in WORKFLOW_SKILL_PROJECTIONS[1:]:
+        assert path.read_text(encoding="utf-8") == rendered, path
 
 
 def test_planner_plan_json_example_is_valid_json() -> None:

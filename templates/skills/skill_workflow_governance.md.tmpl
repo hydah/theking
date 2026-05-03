@@ -979,11 +979,23 @@ Legacy 回退：如果 review 文件**完全没有**任何 `### finding-` 头部
 | doc-updater | 礼部尚书 | 礼部 | Sprint 结束后 | 按需 |
 | refactor-cleaner | 吏部尚书 | 吏部 | 代码清理阶段 | 按需 |
 
-### 🧾 Agent Run Ledger（可选审计辅助）
+### 🧾 Agent Run Ledger（审计辅助；新终态任务强制）
 
 每个新 task 可包含 `agent-runs.jsonl`，用于记录 subagent 调用的审计元数据。它是 audit aid / 审计辅助，**不是证明**某个外部 agent 实际执行过的安全凭证；真正的门禁仍是 `spec.md`、测试、verification evidence 与 review pair。
 
-文件可缺失或为空；一旦写入非空记录，每一行必须是 JSON object，且必须包含字段：`timestamp`、`agent`、`purpose`、`input_artifact`、`output_artifact`、`status`、`notes`。空行会被忽略，允许额外字段以便后续扩展。
+Legacy task 与非终态任务允许文件缺失或为空；但带 `theking_schema_version: 1` 的新任务在进入 `ready_to_merge` / `done` 时，如果 `required_agents` 非空，必须为每个 required agent 记录一条 `status: success` 且能匹配当前 task 的 provenance。独立 review 声明为 `subagent-via-task-tool` / `subagent-via-cli` 时，也必须有对应 reviewer agent 的成功记录。
+
+写入记录时优先使用 CLI：`workflowctl record-agent-run --task-dir <TASK_DIR> --agent tdd-guide --purpose "write red tests" --input-artifact spec.md --output-artifact tests/test_x.py --status success --notes "completed" --invocation-channel subagent-via-task-tool`。
+
+一旦写入非空记录，每一行必须是 JSON object，且必须包含字段：`timestamp`、`agent`、`purpose`、`input_artifact`、`output_artifact`、`status`、`notes`。`record-agent-run` 还要求 `--invocation-channel`，用于终态 required-agent 和 reviewer provenance 匹配。空行会被忽略，允许额外字段以便后续扩展。
+
+### Runtime-backed Gate Contract（运行时门禁合同）
+
+- **agent provenance**: 新终态任务（`theking_schema_version: 1` 且 `status` 为 `ready_to_merge` / `done`）如果声明 `required_agents`，`workflowctl check` 必须看到每个 required agent 的成功 provenance。
+- **reviewer provenance**: review 文件声明 `Reviewer independence: subagent-via-task-tool` 或 `subagent-via-cli` 时，必须有匹配 reviewer agent 的成功 `agent-runs.jsonl` 记录；`self` / `main-agent-fallback` 不能满足新终态任务的独立 review。
+- **source identity**: 生成项目引用安装后的 `workflowctl` 命令和当前 workspace/runtime source；不得把机器本地脚本路径写进生成 skill / command / docs。
+- **static gates**: `ruff check scripts tests`、`mypy scripts`、pytest、`workflowctl check` 与 `workflowctl sprint-check` 是交付前的静态/CLI 质量门，失败时先修复再 review。
+- **strict audit expectations**: `workflowctl finalize` 会写 action ledger transition entries；`workflowctl audit --strict` 会拒绝新任务空 ledger。审计日志是可验证事实链，不是可跳过的附属说明。
 
 ### 🏰 朝廷架构
 

@@ -27,14 +27,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+import constants  # noqa: E402
 from constants import WorkflowError  # noqa: E402
 from validation import (  # noqa: E402
     is_new_theking_task,
     validate_task_metadata,
 )
-
-import constants  # noqa: E402
-
 
 SCRIPT_PATH = REPO_ROOT / "scripts" / "workflowctl.py"
 

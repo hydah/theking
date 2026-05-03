@@ -7,6 +7,7 @@ loops). Injecting the repo root here keeps that import path uniform.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -106,4 +107,28 @@ def populate_handoff_anchor(task_dir: Path, *, file_line: str = "scripts/validat
         "- Impact surface:\n",
         encoding="utf-8",
     )
+
+
+def plant_agent_run_provenance(task_dir: Path) -> None:
+    """Seed required agent provenance for tests that forge terminal task state."""
+    lines = []
+    for agent in ("tdd-guide", "code-reviewer"):
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": "2026-05-02T16:45:00Z",
+                    "agent": agent,
+                    "purpose": f"test provenance for {agent}",
+                    "input_artifact": "spec.md",
+                    "output_artifact": f"conversation:{agent}",
+                    "status": "success",
+                    "notes": "seeded by test fixture",
+                    "invocation_channel": "subagent-via-task-tool",
+                    "task_id": task_dir.name,
+                    "task_path": str(task_dir),
+                },
+                sort_keys=True,
+            )
+        )
+    (task_dir / "agent-runs.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

@@ -456,7 +456,7 @@ def write_task_files(
             bundle_block=bundle_block,
             review_mode=review_mode,
             created_at=created_at,
-            theking_schema_version=theking_schema_version,
+            theking_schema_version=str(theking_schema_version),
         ),
         encoding="utf-8",
     )

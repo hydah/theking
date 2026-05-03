@@ -160,6 +160,29 @@ def verification_result_markdown() -> str:
     )
 
 
+def write_agent_run_provenance(task_dir: Path) -> None:
+    lines = []
+    for agent in ("tdd-guide", "code-reviewer"):
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": "2026-05-02T16:45:00Z",
+                    "agent": agent,
+                    "purpose": f"test provenance for {agent}",
+                    "input_artifact": "spec.md",
+                    "output_artifact": f"conversation:{agent}",
+                    "status": "success",
+                    "notes": "seeded by sprint-check tests",
+                    "invocation_channel": "subagent-via-task-tool",
+                    "task_id": task_dir.name,
+                    "task_path": str(task_dir),
+                },
+                sort_keys=True,
+            )
+        )
+    (task_dir / "agent-runs.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def bootstrap_sprint_with_tasks(tmp_path: Path) -> Path:
     run_cli(
         ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
@@ -329,6 +352,7 @@ def test_sprint_check_fails_when_ready_to_merge_task_has_no_review_pair(tmp_path
         encoding="utf-8",
     )
     write_text(task_dir / "verification" / "cli" / "result.md", verification_result_markdown())
+    write_agent_run_provenance(task_dir)
 
     result = run_cli(
         ["sprint-check", "--sprint-dir", str(sprint_dir)],
@@ -687,6 +711,170 @@ def test_status_prefers_latest_unfinished_task_over_stale_checkpoint(tmp_path: P
     assert "Saved decree checkpoint:" in result.stdout
     assert "Next step: Create sprint and tasks" in result.stdout
     assert result.stdout.index("Latest unfinished task: TASK-001-task-a (draft)") < result.stdout.index("Saved decree checkpoint:")
+
+
+def test_status_demotes_stale_done_sprint_checkpoint_when_no_active_task(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    for task_dir in sorted((sprint_dir / "tasks").iterdir()):
+        if task_dir.is_dir():
+            set_task_status(
+                task_dir / "task.md",
+                status="done",
+                history=[
+                    "draft",
+                    "planned",
+                    "red",
+                    "green",
+                    "in_review",
+                    "ready_to_merge",
+                    "done",
+                ],
+                current_review_round=1,
+            )
+    checkpoint_result = run_cli(
+        [
+            "checkpoint",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--phase",
+            "phase-3-planning",
+            "--flow",
+            "full",
+            "--summary",
+            "Old completed sprint decree",
+            "--next-step",
+            "Continue from stale completed sprint",
+            "--sprint",
+            "sprint-001-foundation",
+        ],
+        cwd=tmp_path,
+    )
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert checkpoint_result.returncode == 0, checkpoint_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Recovery source: decree checkpoint" not in result.stdout
+    assert "Recovery source: none" in result.stdout
+    assert "Saved decree checkpoint" in result.stdout
+    assert "stale" in result.stdout.lower() or "completed" in result.stdout.lower()
+    assert "continue from the checkpoint above" not in result.stdout.lower()
+
+
+def test_status_demotes_stale_sealed_sprint_checkpoint_when_no_active_task(tmp_path: Path) -> None:
+    run_cli(
+        ["init-project", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+    run_cli(
+        [
+            "init-sprint",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--theme",
+            "foundation",
+        ],
+        cwd=tmp_path,
+    )
+    sprint_dir = workflow_root(tmp_path) / "sprints" / "sprint-001-foundation"
+    sprint_md = sprint_dir / "sprint.md"
+    sprint_md.write_text(
+        "---\nstatus: sealed\nsealed_at: 2026-05-03T00:00:00Z\n---\n"
+        + sprint_md.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    checkpoint_result = run_cli(
+        [
+            "checkpoint",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--phase",
+            "phase-3-planning",
+            "--flow",
+            "full",
+            "--summary",
+            "Old sealed sprint decree",
+            "--next-step",
+            "Continue from stale sealed sprint",
+            "--sprint",
+            "sprint-001-foundation",
+        ],
+        cwd=tmp_path,
+    )
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert checkpoint_result.returncode == 0, checkpoint_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Recovery source: decree checkpoint" not in result.stdout
+    assert "Recovery source: none" in result.stdout
+    assert "Saved decree checkpoint" in result.stdout
+    assert "stale" in result.stdout.lower() or "completed" in result.stdout.lower()
+    assert "continue from the checkpoint above" not in result.stdout.lower()
+
+
+def test_status_keeps_checkpoint_recoverable_when_sprint_has_broken_task_dir(tmp_path: Path) -> None:
+    sprint_dir = bootstrap_sprint_with_tasks(tmp_path)
+    for task_dir in sorted((sprint_dir / "tasks").iterdir()):
+        if task_dir.is_dir():
+            set_task_status(
+                task_dir / "task.md",
+                status="done",
+                history=[
+                    "draft",
+                    "planned",
+                    "red",
+                    "green",
+                    "in_review",
+                    "ready_to_merge",
+                    "done",
+                ],
+                current_review_round=1,
+            )
+    (sprint_dir / "tasks" / "TASK-099-broken").mkdir()
+    checkpoint_result = run_cli(
+        [
+            "checkpoint",
+            "--root",
+            str(tmp_path),
+            "--project-slug",
+            "demo-app",
+            "--phase",
+            "phase-3-planning",
+            "--flow",
+            "full",
+            "--summary",
+            "Interrupted sprint decree",
+            "--next-step",
+            "Recover partial sprint",
+            "--sprint",
+            "sprint-001-foundation",
+        ],
+        cwd=tmp_path,
+    )
+
+    result = run_cli(
+        ["status", "--root", str(tmp_path), "--project-slug", "demo-app"],
+        cwd=tmp_path,
+    )
+
+    assert checkpoint_result.returncode == 0, checkpoint_result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Recovery source: decree checkpoint" in result.stdout
+    assert "Saved decree checkpoint (stale" not in result.stdout
+    assert "continue from the checkpoint above" in result.stdout.lower()
 
 
 def test_status_reports_active_task_green_next_step(tmp_path: Path) -> None:

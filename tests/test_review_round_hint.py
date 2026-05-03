@@ -137,6 +137,10 @@ def _advance(tmp_path: Path, task_dir: Path, to: str) -> None:
             "Exit: 0\n",
             encoding="utf-8",
         )
+    if to == "ready_to_merge":
+        from conftest import plant_agent_run_provenance
+
+        plant_agent_run_provenance(task_dir)
     # sprint-017 TASK-002: red->green and green->in_review now require a
     # runner PASS marker. Plant a minimal pytest-style marker before any
     # transition that touches green; idempotent on repeat calls.
@@ -268,6 +272,16 @@ def test_init_review_round_rejected_from_ready_to_merge_hints_done(tmp_path: Pat
         "- Fix: nothing\n"
         "- Evidence: pytest\n\n"
         "## Verification\n\n- pytest\n",
+        encoding="utf-8",
+    )
+    review_md = task_dir / "review" / "code-review-round-001.md"
+    review_md.write_text(
+        review_md.read_text(encoding="utf-8")
+        .replace("- Reviewer: <name>", "- Reviewer: code-reviewer")
+        .replace(
+            "- Reviewer independence: <self | subagent-via-task-tool | subagent-via-cli | main-agent-fallback>",
+            "- Reviewer independence: subagent-via-task-tool",
+        ),
         encoding="utf-8",
     )
     _advance(tmp_path, task_dir, "ready_to_merge")

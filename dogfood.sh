@@ -109,20 +109,25 @@ run_ensure() {
 
     cd "${PROJECT_DIR}"
 
-    # Determine how to run workflowctl
+    # Determine how to run workflowctl. Prefer current workspace sources;
+    # only use a global workflowctl fallback when no local .venv or uv-run
+    # command is available.
     local WORKFLOWCTL=""
+    local WORKFLOWCTL_SOURCE="current workspace"
     if [[ -f ".venv/bin/workflowctl" ]]; then
         WORKFLOWCTL=".venv/bin/workflowctl"
-    elif command -v workflowctl &> /dev/null; then
-        WORKFLOWCTL="workflowctl"
     elif command -v uv &> /dev/null; then
         WORKFLOWCTL="uv run workflowctl"
+    elif command -v workflowctl &> /dev/null; then
+        warn "Using global workflowctl fallback; prefer current workspace uv/.venv workflowctl."
+        WORKFLOWCTL="workflowctl"
+        WORKFLOWCTL_SOURCE="global workflowctl fallback"
     else
         error "Cannot find workflowctl. Please install theking first."
         exit 1
     fi
 
-    info "Using: ${WORKFLOWCTL}"
+    info "Using ${WORKFLOWCTL_SOURCE}: ${WORKFLOWCTL}"
 
     # Run ensure
     ${WORKFLOWCTL} ensure --project-dir "${PROJECT_DIR}" --project-slug theking

@@ -33,6 +33,7 @@ def test_workflow_skill_documents_agent_run_ledger_as_audit_aid() -> None:
         "output_artifact",
         "status",
         "notes",
+        "invocation-channel",
     ):
         assert field in ledger_slice, f"Ledger docs must name required field `{field}`. Slice:\n{ledger_slice}"
 
@@ -48,5 +49,17 @@ def test_workflow_skill_documents_agent_run_ledger_as_audit_aid() -> None:
         or "非证明" in ledger_slice
     ), (
         "Ledger docs must explicitly say the ledger is not proof of agent execution. "
+        f"Slice:\n{ledger_slice}"
+    )
+    assert "ready_to_merge" in ledger_slice and "done" in ledger_slice, (
+        "Ledger docs must say new terminal tasks require provenance. "
+        f"Slice:\n{ledger_slice}"
+    )
+    assert "record-agent-run" in ledger_slice, (
+        "Ledger docs must point agents to the provenance recording CLI. "
+        f"Slice:\n{ledger_slice}"
+    )
+    assert "subagent-via-task-tool" in ledger_slice and "subagent-via-cli" in ledger_slice, (
+        "Ledger docs must name supported independent subagent invocation channels. "
         f"Slice:\n{ledger_slice}"
     )

@@ -4,6 +4,7 @@ import argparse
 import json
 import shutil
 import sys
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ try:
     )
     from .sessions import (
         append_ledger_entry,
+        checkpoint_references_completed_sprint,
         compute_entry_hash,
         describe_recovery_source,
         find_latest_unfinished_task,
@@ -84,6 +86,7 @@ try:
         slugify,
         stringify,
         task_requires_security_review,
+        validate_agent_runs_ledger,
         validate_handoff_evidence_anchors,
         validate_red_transition_diff,
         validate_sprint_dir,
@@ -122,6 +125,7 @@ except ImportError:
     )
     from sessions import (
         append_ledger_entry,
+        checkpoint_references_completed_sprint,
         compute_entry_hash,
         describe_recovery_source,
         find_latest_unfinished_task,
@@ -172,6 +176,7 @@ except ImportError:
         slugify,
         stringify,
         task_requires_security_review,
+        validate_agent_runs_ledger,
         validate_handoff_evidence_anchors,
         validate_red_transition_diff,
         validate_sprint_dir,
@@ -568,6 +573,27 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("--task-dir", required=True)
     finalize.set_defaults(handler=handle_finalize)
 
+    record_agent_run = add_command_parser(
+        subparsers,
+        "record-agent-run",
+        help_text="Append one structured required-agent provenance entry to agent-runs.jsonl.",
+        example=(
+            "workflowctl record-agent-run --task-dir <TASK_DIR> --agent tdd-guide "
+            "--purpose 'write red tests' --input-artifact spec.md "
+            "--output-artifact tests/test_x.py --status success --notes 'completed' "
+            "--invocation-channel subagent-via-task-tool"
+        ),
+    )
+    record_agent_run.add_argument("--task-dir", required=True)
+    record_agent_run.add_argument("--agent", required=True)
+    record_agent_run.add_argument("--purpose", required=True)
+    record_agent_run.add_argument("--input-artifact", required=True)
+    record_agent_run.add_argument("--output-artifact", required=True)
+    record_agent_run.add_argument("--status", required=True)
+    record_agent_run.add_argument("--notes", required=True)
+    record_agent_run.add_argument("--invocation-channel")
+    record_agent_run.set_defaults(handler=handle_record_agent_run)
+
     verify = add_command_parser(
         subparsers,
         "verify",
@@ -890,9 +916,16 @@ def handle_audit(args: argparse.Namespace) -> None:
         raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
     task_dir = input_task_dir.resolve()
     entries = read_ledger(task_dir)
+    task_paths = derive_task_paths(task_dir)
+    task_data, _body = load_task_document(task_paths.task_md)
     findings: list[str] = []
 
     if not entries:
+        if args.strict and is_new_theking_task(task_data):
+            raise WorkflowError(
+                "audit --strict requires ledger entries for new tasks; "
+                f"no ledger entries found for {task_dir}"
+            )
         print("no ledger entries; nothing to verify (empty or legacy task)")
         return
 
@@ -921,7 +954,7 @@ def handle_audit(args: argparse.Namespace) -> None:
         prev_entry = entry
 
     if not findings:
-        print("ledger clean (0 findings across {} entries)".format(len(entries)))
+        print(f"ledger clean (0 findings across {len(entries)} entries)")
         return
 
     print(f"{len(findings)} finding(s):")
@@ -997,7 +1030,7 @@ def handle_advance_status(args: argparse.Namespace) -> None:
         raise
 
     # sprint-019 TASK-005: record transition in append-only ledger
-    try:
+    with suppress(OSError):
         append_ledger_entry(
             task_paths.task_dir,
             {
@@ -1006,8 +1039,6 @@ def handle_advance_status(args: argparse.Namespace) -> None:
                 "to_status": updated_task["status"],
             },
         )
-    except OSError:
-        pass  # ledger is observational, not blocking
 
     print(f"Updated {task_dir} -> {updated_task['status']}")
 
@@ -1083,13 +1114,11 @@ def handle_init_review_round(args: argparse.Namespace) -> None:
         raise
 
     # sprint-019 TASK-005: ledger entry
-    try:
+    with suppress(OSError):
         append_ledger_entry(
             task_paths.task_dir,
             {"type": "init_review_round", "round_number": round_number},
         )
-    except OSError:
-        pass
 
     print(f"Initialized review round {round_number:03d} for {task_dir}")
 
@@ -1211,9 +1240,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
     # shares a single created_at timestamp. This gives the audit ledger
     # a single atomic "sprint was initialized" event instead of N events
     # scattered across sub-second timestamps.
-    from datetime import datetime, timezone as _tz
-
-    shared_created_at = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    shared_created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         for entry in prepared_entries:
             task_id = entry["task_id"]
@@ -1532,10 +1559,8 @@ def handle_activate(args: argparse.Namespace) -> None:
     ensure_local_path(active_task_file, task_paths.project_dir, "active-task")
     active_task_file.write_text(str(task_dir) + "\n", encoding="utf-8")
     # sprint-019 TASK-005: ledger entry
-    try:
+    with suppress(OSError):
         append_ledger_entry(task_paths.task_dir, {"type": "activate"})
-    except OSError:
-        pass
     print(f"Activated {task_dir}")
 
 
@@ -1652,17 +1677,30 @@ def handle_status(args: argparse.Namespace) -> None:
     session_checkpoint = load_decree_checkpoint(project_dir)
     active_task_summary = load_active_task_status(project_dir)
     latest_unfinished_task = None if active_task_summary else find_latest_unfinished_task(project_dir, project_slug)
+    checkpoint_is_completed = checkpoint_references_completed_sprint(
+        project_dir,
+        project_slug,
+        session_checkpoint,
+    )
+    recovery_checkpoint = (
+        None
+        if checkpoint_is_completed and active_task_summary is None and latest_unfinished_task is None
+        else session_checkpoint
+    )
 
     lines = [
         f"Project: {project_slug}",
-        f"Recovery source: {describe_recovery_source(session_checkpoint, active_task_summary, latest_unfinished_task)}",
+        f"Recovery source: {describe_recovery_source(recovery_checkpoint, active_task_summary, latest_unfinished_task)}",
     ]
 
     checkpoint_lines: list[str] = []
     if session_checkpoint is not None:
+        checkpoint_header = "Saved decree checkpoint:"
+        if checkpoint_is_completed:
+            checkpoint_header = "Saved decree checkpoint (stale, not used for recovery):"
         checkpoint_lines.extend(
             [
-                "Saved decree checkpoint:",
+                checkpoint_header,
                 f"- Summary: {session_checkpoint.get('summary', '')}",
                 f"- Phase: {session_checkpoint.get('phase', '')}",
             ]
@@ -1702,14 +1740,23 @@ def handle_status(args: argparse.Namespace) -> None:
         lines.extend(checkpoint_lines)
     else:
         lines.extend(checkpoint_lines)
-        lines.extend(
-            [
-                "Suggested recovery:",
-                "- No active task found.",
-                "- If this session was compacted mid-decree, continue from the checkpoint above.",
-                "- Otherwise start a new /decree or activate an existing unfinished task.",
-            ]
-        )
+        if checkpoint_is_completed:
+            lines.extend(
+                [
+                    "Suggested recovery:",
+                    "- No active task found.",
+                    "- Saved checkpoint points at a sealed or completed sprint; start a new /decree or activate an unfinished task.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "Suggested recovery:",
+                    "- No active task found.",
+                    "- If this session was compacted mid-decree, continue from the checkpoint above.",
+                    "- Otherwise start a new /decree or activate an existing unfinished task.",
+                ]
+            )
 
     print("\n".join(lines))
 
@@ -1769,12 +1816,84 @@ def handle_finalize(args: argparse.Namespace) -> None:
             write_task_document(task_paths.task_md, updated_task, body_now)
             validate_task_dir(task_dir)
             update_sprint_overview(sprint_md)
+            append_ledger_entry(
+                task_paths.task_dir,
+                {
+                    "type": "transition",
+                    "from_status": stringify(task_data_now["status"]),
+                    "to_status": updated_task["status"],
+                },
+            )
         except Exception:
             task_paths.task_md.write_text(original_content, encoding="utf-8")
             sprint_md.write_text(original_sprint_content, encoding="utf-8")
             raise
 
     print(f"Finalized {task_dir} -> done")
+
+
+AGENT_RUN_REQUIRED_CLI_FIELDS = (
+    "agent",
+    "purpose",
+    "input_artifact",
+    "output_artifact",
+    "status",
+    "notes",
+    "invocation_channel",
+)
+
+
+def handle_record_agent_run(args: argparse.Namespace) -> None:
+    input_task_dir = Path(args.task_dir).expanduser()
+    if input_task_dir.is_symlink():
+        raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
+    task_dir = input_task_dir.resolve()
+    if not task_dir.is_dir():
+        raise WorkflowError(f"task_dir must be an existing directory: {task_dir}")
+    task_paths = derive_task_paths(task_dir)
+    ensure_file(task_paths.task_md, "task.md")
+    ensure_file(task_paths.spec_md, "spec.md")
+
+    ledger_path = task_dir / "agent-runs.jsonl"
+    if ledger_path.exists():
+        validate_agent_runs_ledger(ledger_path)
+
+    payload = {
+        "timestamp": _verify_iso8601_now(),
+        "agent": args.agent.strip(),
+        "purpose": args.purpose.strip(),
+        "input_artifact": args.input_artifact.strip(),
+        "output_artifact": args.output_artifact.strip(),
+        "status": args.status.strip(),
+        "notes": args.notes.strip(),
+        "invocation_channel": (args.invocation_channel or "").strip(),
+        "task_id": task_paths.task_dir.name,
+        "task_path": str(task_paths.task_dir),
+    }
+
+    for field in AGENT_RUN_REQUIRED_CLI_FIELDS:
+        if not payload[field]:
+            raise WorkflowError(f"--{field.replace('_', '-')} must not be empty")
+
+    ledger_path = _append_agent_run(task_dir, payload)
+    validate_agent_runs_ledger(ledger_path)
+    print(json.dumps({"status": "ok", "ledger_path": str(ledger_path)}, ensure_ascii=False))
+
+
+def _append_agent_run(task_dir: Path, payload: dict[str, Any]) -> Path:
+    ledger_path = task_dir / "agent-runs.jsonl"
+    if ledger_path.is_symlink():
+        raise WorkflowError("agent-runs.jsonl must not be a symlink")
+    if ledger_path.exists() and not ledger_path.is_file():
+        raise WorkflowError("agent-runs.jsonl must be a file")
+    pre_ledger_text = ledger_path.read_text(encoding="utf-8") if ledger_path.is_file() else ""
+    if pre_ledger_text and not pre_ledger_text.endswith("\n"):
+        pre_ledger_text += "\n"
+    ledger_path.write_text(
+        pre_ledger_text + json.dumps(payload, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return ledger_path
 
 
 def handle_verify(args: argparse.Namespace) -> None:
@@ -1837,7 +1956,6 @@ def handle_verify(args: argparse.Namespace) -> None:
     # guarantee; the argument-validation block above is where atomicity matters.
     profile_dir.mkdir(parents=True, exist_ok=True)
     evidence_md = profile_dir / "evidence.md"
-    ledger_path = task_dir / "agent-runs.jsonl"
 
     # --- Run the command ---
     started_at_iso = _verify_iso8601_now()
@@ -1925,11 +2043,7 @@ def handle_verify(args: argparse.Namespace) -> None:
             f"substantive_delta={substantive_chars_appended}"
         ),
     }
-    pre_ledger_text = ledger_path.read_text(encoding="utf-8") if ledger_path.is_file() else ""
-    if pre_ledger_text and not pre_ledger_text.endswith("\n"):
-        pre_ledger_text += "\n"
-    new_ledger_text = pre_ledger_text + json.dumps(ledger_line, ensure_ascii=False) + "\n"
-    ledger_path.write_text(new_ledger_text, encoding="utf-8")
+    _append_agent_run(task_dir, ledger_line)
 
     # --- Emit JSON summary ---
     summary = {

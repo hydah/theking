@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -296,6 +297,487 @@ def test_check_allows_missing_or_empty_agent_runs_ledger(
         "agent-runs.jsonl is optional audit metadata; missing/empty ledgers "
         f"must not block check. stdout={result.stdout!r} stderr={result.stderr!r}"
     )
+
+
+def mark_task_as_new(task_dir: Path) -> None:
+    task_md = task_dir / "task.md"
+    text = task_md.read_text(encoding="utf-8")
+    if "theking_schema_version:" in text:
+        return
+    task_md.write_text(
+        text.replace(
+            "current_review_round:",
+            "created_at: 2026-05-02T16:29:04Z\n"
+            "theking_schema_version: 1\n"
+            "current_review_round:",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_review_pair(
+    task_dir: Path,
+    *,
+    reviewer: str = "code-reviewer",
+    independence: str = "subagent-via-task-tool",
+    checklist_items: int = 0,
+) -> None:
+    review_dir = task_dir / "review"
+    review_lines = [
+        "# Code Review Round 001",
+        "",
+        "## Context",
+        "- Task: TASK-001-login-flow",
+        f"- Reviewer: {reviewer}",
+        f"- Reviewer independence: {independence}",
+        "",
+        "## Findings",
+        "- (no findings this round)",
+        "",
+    ]
+    if checklist_items:
+        review_lines.extend(["## Self-audit checklist (>= 10 points)"])
+        for index in range(1, checklist_items + 1):
+            review_lines.append(f"- Point {index}: verified")
+        review_lines.append("")
+    write_text(review_dir / "code-review-round-001.md", "\n".join(review_lines))
+    write_text(
+        review_dir / "code-review-round-001.resolved.md",
+        "\n".join(
+            [
+                "# Resolved Code Review Round 001",
+                "",
+                "## Fixes",
+                "- No findings this round.",
+                "",
+                "## Verification",
+                "- uv run --with pytest pytest tests -q",
+                "",
+            ]
+        ),
+    )
+
+
+def make_new_terminal_task(
+    tmp_path: Path,
+    *,
+    status: str = "ready_to_merge",
+    required_agents: list[str] | None = None,
+) -> Path:
+    history = ["draft", "planned", "red", "green", "in_review"]
+    if status == "done":
+        history.append("ready_to_merge")
+    history.append(status)
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status=status,
+        status_history=history,
+        current_review_round=1,
+        required_agents=required_agents or ["tdd-guide", "code-reviewer"],
+        include_verification_evidence=True,
+    )
+    mark_task_as_new(task_dir)
+    write_review_pair(task_dir)
+    return task_dir
+
+
+def agent_run_line(agent: str, *, status: str = "success", **extra: str) -> str:
+    payload = {
+        "timestamp": "2026-05-02T16:45:00Z",
+        "agent": agent,
+        "purpose": f"run {agent}",
+        "input_artifact": "spec.md",
+        "output_artifact": f"conversation:{agent}",
+        "status": status,
+        "notes": "recorded by test",
+        **extra,
+    }
+    return json.dumps(payload, sort_keys=True) + "\n"
+
+
+@pytest.mark.parametrize("task_status", ["ready_to_merge", "done"])
+@pytest.mark.parametrize("ledger_content", [None, ""])
+def test_check_rejects_new_terminal_task_missing_required_agent_runs(
+    tmp_path: Path,
+    task_status: str,
+    ledger_content: str | None,
+) -> None:
+    task_dir = make_new_terminal_task(tmp_path, status=task_status)
+    ledger = task_dir / "agent-runs.jsonl"
+    if ledger_content is not None:
+        write_text(ledger, ledger_content)
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, (
+        "new terminal tasks with required_agents must require agent-runs.jsonl "
+        f"provenance. stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "agent-runs.jsonl" in result.stderr
+    assert "required agent" in result.stderr
+    assert "tdd-guide" in result.stderr
+
+
+def test_check_accepts_new_terminal_task_with_required_agent_runs(tmp_path: Path) -> None:
+    task_dir = make_new_terminal_task(tmp_path)
+    write_text(
+        task_dir / "agent-runs.jsonl",
+        agent_run_line(
+            "tdd-guide",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        )
+        + agent_run_line(
+            "code-reviewer",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        ),
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "ledger_content, expected_missing",
+    [
+        (agent_run_line("tdd-guide") + agent_run_line("code-reviewer"), "tdd-guide"),
+        (
+            agent_run_line(
+                "tdd-guide",
+                invocation_channel="subagent-via-task-tool",
+                task_id="TASK-999-other-task",
+            )
+            + agent_run_line(
+                "code-reviewer",
+                invocation_channel="subagent-via-task-tool",
+                task_id="TASK-001-login-flow",
+            ),
+            "tdd-guide",
+        ),
+    ],
+)
+def test_check_rejects_new_terminal_task_with_incomplete_agent_run_provenance(
+    tmp_path: Path,
+    ledger_content: str,
+    expected_missing: str,
+) -> None:
+    task_dir = make_new_terminal_task(tmp_path)
+    write_text(task_dir / "agent-runs.jsonl", ledger_content)
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, result.stderr
+    assert "required agent" in result.stderr
+    assert expected_missing in result.stderr
+
+
+@pytest.mark.parametrize(
+    "ledger_content, expected_missing",
+    [
+        (agent_run_line("planner") + agent_run_line("code-reviewer"), "tdd-guide"),
+        (agent_run_line("tdd-guide"), "code-reviewer"),
+        (agent_run_line("tdd-guide", status="failed") + agent_run_line("code-reviewer"), "tdd-guide"),
+        (
+            agent_run_line("tdd-guide", status="command_failed") + agent_run_line("code-reviewer"),
+            "tdd-guide",
+        ),
+    ],
+)
+def test_check_rejects_new_terminal_task_with_non_satisfying_agent_runs(
+    tmp_path: Path,
+    ledger_content: str,
+    expected_missing: str,
+) -> None:
+    task_dir = make_new_terminal_task(tmp_path)
+    write_text(task_dir / "agent-runs.jsonl", ledger_content)
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, result.stderr
+    assert "required agent" in result.stderr
+    assert expected_missing in result.stderr
+
+
+@pytest.mark.parametrize("independence", ["self", "main-agent-fallback"])
+def test_check_rejects_new_terminal_self_or_fallback_review(
+    tmp_path: Path,
+    independence: str,
+) -> None:
+    task_dir = make_new_terminal_task(tmp_path)
+    write_review_pair(task_dir, reviewer="self", independence=independence, checklist_items=12)
+    write_text(
+        task_dir / "agent-runs.jsonl",
+        agent_run_line(
+            "tdd-guide",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        )
+        + agent_run_line(
+            "code-reviewer",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        ),
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, result.stderr
+    assert "independent review" in result.stderr
+    assert independence in result.stderr
+
+
+@pytest.mark.parametrize("independence", ["subagent-via-task-tool", "subagent-via-cli"])
+def test_check_rejects_new_terminal_subagent_review_without_reviewer_provenance(
+    tmp_path: Path,
+    independence: str,
+) -> None:
+    task_dir = make_new_terminal_task(tmp_path)
+    write_review_pair(task_dir, reviewer="code-reviewer", independence=independence)
+    write_text(
+        task_dir / "agent-runs.jsonl",
+        agent_run_line(
+            "tdd-guide",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        )
+        + agent_run_line(
+            "code-reviewer",
+            invocation_channel="main-agent-fallback",
+            task_id="TASK-001-login-flow",
+        ),
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, result.stderr
+    assert "code-reviewer" in result.stderr
+    assert independence in result.stderr
+
+
+@pytest.mark.parametrize(
+    "review_content",
+    [
+        "# Code review round 001\n\n## Context\n\n## Findings\n- (no findings this round)\n",
+        "# Code review round 001\n\n## Context\n- Reviewer: <name>\n- Reviewer independence: <self | subagent-via-task-tool | subagent-via-cli | main-agent-fallback>\n\n## Findings\n- (no findings this round)\n",
+    ],
+)
+def test_check_rejects_new_terminal_review_missing_or_placeholder_reviewer_fields(
+    tmp_path: Path,
+    review_content: str,
+) -> None:
+    task_dir = make_new_terminal_task(tmp_path)
+    write_text(
+        task_dir / "agent-runs.jsonl",
+        agent_run_line(
+            "tdd-guide",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        )
+        + agent_run_line(
+            "code-reviewer",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        ),
+    )
+    write_text(task_dir / "review" / "code-review-round-001.md", review_content)
+    write_text(
+        task_dir / "review" / "code-review-round-001.resolved.md",
+        resolved_review_markdown("code", 1),
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode != 0, result.stderr
+    assert "Reviewer" in result.stderr
+    assert "new terminal" in result.stderr
+
+
+@pytest.mark.parametrize("independence", ["subagent-via-task-tool", "subagent-via-cli"])
+def test_check_accepts_new_terminal_subagent_review_with_reviewer_provenance(
+    tmp_path: Path,
+    independence: str,
+) -> None:
+    task_dir = make_new_terminal_task(tmp_path)
+    write_review_pair(task_dir, reviewer="code-reviewer", independence=independence)
+    write_text(
+        task_dir / "agent-runs.jsonl",
+        agent_run_line(
+            "tdd-guide",
+            invocation_channel="subagent-via-task-tool",
+            task_id="TASK-001-login-flow",
+        )
+        + agent_run_line(
+            "code-reviewer",
+            invocation_channel=independence,
+            task_id="TASK-001-login-flow",
+        ),
+    )
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("ledger_content", [None, ""])
+def test_check_allows_legacy_terminal_missing_or_empty_agent_runs_ledger(
+    tmp_path: Path,
+    ledger_content: str | None,
+) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="ready_to_merge",
+        status_history=["draft", "planned", "red", "green", "in_review", "ready_to_merge"],
+        current_review_round=1,
+        include_verification_evidence=True,
+    )
+    write_review_pair(task_dir)
+    if ledger_content is not None:
+        write_text(task_dir / "agent-runs.jsonl", ledger_content)
+
+    result = run_cli(["check", "--task-dir", str(task_dir)], cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_record_agent_run_appends_valid_agent_run_line(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+        required_agents=["tdd-guide"],
+    )
+
+    result = run_cli(
+        [
+            "record-agent-run",
+            "--task-dir",
+            str(task_dir),
+            "--agent",
+            "tdd-guide",
+            "--purpose",
+            "write red tests",
+            "--input-artifact",
+            "spec.md",
+            "--output-artifact",
+            "tests/test_check_rules.py",
+            "--status",
+            "success",
+            "--notes",
+            "subagent completed",
+            "--invocation-channel",
+            "subagent-via-task-tool",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((task_dir / "agent-runs.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert payload["agent"] == "tdd-guide"
+    assert payload["status"] == "success"
+    assert payload["invocation_channel"] == "subagent-via-task-tool"
+    assert payload["task_id"] == "TASK-001-login-flow"
+    assert "TASK-001-login-flow" in payload["task_path"]
+
+
+def test_record_agent_run_requires_invocation_channel(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(
+        tmp_path,
+        status="red",
+        status_history=["draft", "planned", "red"],
+        required_agents=["tdd-guide"],
+    )
+
+    result = run_cli(
+        [
+            "record-agent-run",
+            "--task-dir",
+            str(task_dir),
+            "--agent",
+            "tdd-guide",
+            "--purpose",
+            "write red tests",
+            "--input-artifact",
+            "spec.md",
+            "--output-artifact",
+            "tests/test_check_rules.py",
+            "--status",
+            "success",
+            "--notes",
+            "subagent completed",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "--invocation-channel must not be empty" in result.stderr
+    ledger = task_dir / "agent-runs.jsonl"
+    assert not ledger.exists() or ledger.read_text(encoding="utf-8") == ""
+
+
+def test_record_agent_run_rejects_symlink_task_dir(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(tmp_path, status="red", status_history=["draft", "planned", "red"])
+    symlink_task_dir = tmp_path / "task-link"
+    symlink_task_dir.symlink_to(task_dir, target_is_directory=True)
+
+    result = run_cli(
+        [
+            "record-agent-run",
+            "--task-dir",
+            str(symlink_task_dir),
+            "--agent",
+            "tdd-guide",
+            "--purpose",
+            "write red tests",
+            "--input-artifact",
+            "spec.md",
+            "--output-artifact",
+            "tests/test_check_rules.py",
+            "--status",
+            "success",
+            "--notes",
+            "subagent completed",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "task_dir must not be a symlink" in result.stderr
+
+
+def test_record_agent_run_rejects_symlink_ledger_without_writing(tmp_path: Path) -> None:
+    task_dir = make_valid_task_tree(tmp_path, status="red", status_history=["draft", "planned", "red"])
+    outside_file = tmp_path / "outside-ledger.txt"
+    outside_file.write_text("outside\n", encoding="utf-8")
+    ledger = task_dir / "agent-runs.jsonl"
+    ledger.symlink_to(outside_file)
+
+    result = run_cli(
+        [
+            "record-agent-run",
+            "--task-dir",
+            str(task_dir),
+            "--agent",
+            "tdd-guide",
+            "--purpose",
+            "write red tests",
+            "--input-artifact",
+            "spec.md",
+            "--output-artifact",
+            "tests/test_check_rules.py",
+            "--status",
+            "success",
+            "--notes",
+            "subagent completed",
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "agent-runs.jsonl must not be a symlink" in result.stderr
+    assert outside_file.read_text(encoding="utf-8") == "outside\n"
 
 
 @pytest.mark.parametrize(

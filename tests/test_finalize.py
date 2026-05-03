@@ -8,6 +8,7 @@ does not exist yet in workflowctl.py, so every test is expected to fail.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -18,6 +19,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "workflowctl.py"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from scaffold import build_runtime_template_vars  # noqa: E402
+from sessions import compute_entry_hash, read_ledger  # noqa: E402
 from validation import render_template  # noqa: E402
 
 
@@ -203,13 +205,15 @@ def write_review_pair(task_dir: Path, round_number: int = 1) -> None:
     review_dir = task_dir / "review"
     review_dir.mkdir(exist_ok=True)
     review_file = review_dir / f"code-review-round-{round_number:03d}.md"
-    if not review_file.is_file():
-        review_file.write_text(
-            f"# Code Review Round {round_number:03d}\n\n"
-            "## Context\n- Finalize demo\n\n"
-            "## Findings\n- None\n",
-            encoding="utf-8",
-        )
+    review_file.write_text(
+        f"# Code Review Round {round_number:03d}\n\n"
+        "## Context\n"
+        "- Finalize demo\n"
+        "- Reviewer: code-reviewer\n"
+        "- Reviewer independence: subagent-via-task-tool\n\n"
+        "## Findings\n- (no findings this round)\n",
+        encoding="utf-8",
+    )
     resolved_file = review_dir / f"code-review-round-{round_number:03d}.resolved.md"
     resolved_file.write_text(
         f"# Resolved Code Review Round {round_number:03d}\n\n"
@@ -221,6 +225,30 @@ def write_review_pair(task_dir: Path, round_number: int = 1) -> None:
         "## Verification\n- pytest passed\n",
         encoding="utf-8",
     )
+    write_agent_run_provenance(task_dir)
+
+
+def write_agent_run_provenance(task_dir: Path) -> None:
+    lines = []
+    for agent in ("tdd-guide", "code-reviewer"):
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": "2026-05-02T16:45:00Z",
+                    "agent": agent,
+                    "purpose": f"test provenance for {agent}",
+                    "input_artifact": "spec.md",
+                    "output_artifact": f"conversation:{agent}",
+                    "status": "success",
+                    "notes": "seeded by finalize tests",
+                    "invocation_channel": "subagent-via-task-tool",
+                    "task_id": task_dir.name,
+                    "task_path": str(task_dir),
+                },
+                sort_keys=True,
+            )
+        )
+    (task_dir / "agent-runs.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def seed_verification_evidence(task_dir: Path) -> None:
@@ -267,7 +295,12 @@ def force_task_to_done(task_dir: Path) -> None:
     review_dir = task_dir / "review"
     review_dir.mkdir(exist_ok=True)
     (review_dir / "code-review-round-001.md").write_text(
-        "# Code Review Round 001\n\n## Context\n- forged for test\n\n## Findings\n- none\n",
+        "# Code Review Round 001\n\n"
+        "## Context\n"
+        "- forged for test\n"
+        "- Reviewer: code-reviewer\n"
+        "- Reviewer independence: subagent-via-task-tool\n\n"
+        "## Findings\n- (no findings this round)\n",
         encoding="utf-8",
     )
     (review_dir / "code-review-round-001.resolved.md").write_text(
@@ -282,6 +315,7 @@ def force_task_to_done(task_dir: Path) -> None:
         "- Stdout: OK all transitions accounted for, exit=0\n",
         encoding="utf-8",
     )
+    write_agent_run_provenance(task_dir)
 
 
 def force_task_to_ready_to_merge(task_dir: Path) -> None:
@@ -303,7 +337,12 @@ def force_task_to_ready_to_merge(task_dir: Path) -> None:
     review_dir = task_dir / "review"
     review_dir.mkdir(exist_ok=True)
     (review_dir / "code-review-round-001.md").write_text(
-        "# Code Review Round 001\n\n## Context\n- forged for test\n\n## Findings\n- none\n",
+        "# Code Review Round 001\n\n"
+        "## Context\n"
+        "- forged for test\n"
+        "- Reviewer: code-reviewer\n"
+        "- Reviewer independence: subagent-via-task-tool\n\n"
+        "## Findings\n- (no findings this round)\n",
         encoding="utf-8",
     )
     (review_dir / "code-review-round-001.resolved.md").write_text(
@@ -318,6 +357,7 @@ def force_task_to_ready_to_merge(task_dir: Path) -> None:
         "- Stdout: OK all transitions accounted for, exit=0\n",
         encoding="utf-8",
     )
+    write_agent_run_provenance(task_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +386,38 @@ def test_finalize_succeeds_on_reviewed_task(tmp_path: Path) -> None:
         f"Task should be in done state after finalize, "
         f"got {read_task_status(task_dir)!r}"
     )
+
+
+def test_finalize_writes_ledger_entries_for_transitions_it_applies(tmp_path: Path) -> None:
+    task_dir = bootstrap_project_and_sprint(tmp_path)
+    advance_to_in_review(tmp_path, task_dir)
+    write_review_pair(task_dir, round_number=1)
+    seed_verification_evidence(task_dir)
+
+    result = run_cli(
+        ["finalize", "--task-dir", str(task_dir)],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert read_task_status(task_dir) == "done"
+    entries = read_ledger(task_dir)
+    transitions = [entry for entry in entries if entry.get("type") == "transition"]
+    status_pairs = [
+        (entry.get("from_status"), entry.get("to_status"))
+        for entry in transitions
+    ]
+    assert ("in_review", "ready_to_merge") in status_pairs
+    assert ("ready_to_merge", "done") in status_pairs
+    ready_index = status_pairs.index(("in_review", "ready_to_merge"))
+    done_index = status_pairs.index(("ready_to_merge", "done"))
+    assert ready_index < done_index
+    finalize_entries = transitions[ready_index : done_index + 1]
+    for previous, current in zip(finalize_entries, finalize_entries[1:], strict=False):
+        assert current["prev_hash"] == compute_entry_hash(previous)
+    for entry in finalize_entries:
+        assert entry.get("git_head")
+        assert entry.get("prev_hash")
 
 
 def test_finalize_fails_on_check_failure(tmp_path: Path) -> None:

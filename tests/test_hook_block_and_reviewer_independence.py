@@ -36,7 +36,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from constants import WorkflowError  # noqa: E402
 from validation import validate_reviewer_declaration  # noqa: E402
 
-
 HOOK_JS = REPO_ROOT / ".theking" / "hooks" / "check-spec-exists.js"
 HOOK_TMPL = REPO_ROOT / "templates" / "hooks" / "hook_check_spec.js.tmpl"
 REVIEW_TMPL = REPO_ROOT / "templates" / "workflow" / "code_review_round.md.tmpl"
@@ -143,6 +142,18 @@ def test_review_template_has_reviewer_fields() -> None:
     )
 
 
+def test_review_template_distinguishes_legacy_fallback_from_new_task_strictness() -> None:
+    text = REVIEW_TMPL.read_text(encoding="utf-8")
+    lower = text.lower()
+
+    assert "agent-runs.jsonl" in text
+    assert "new terminal" in lower or "new tasks" in lower
+    assert "self" in lower
+    assert "main-agent-fallback" in lower
+    assert "reviewer-agent" in lower
+    assert "not satisfy" in lower or "does not satisfy" in lower
+
+
 # ---------------------------------------------------------------------------
 # Part B: validate_reviewer_declaration
 # ---------------------------------------------------------------------------
@@ -163,7 +174,7 @@ def _write_review(
         lines.append(f"- Reviewer independence: {independence}")
     lines.extend(["", "## Findings", "- (no findings this round)"])
     if checklist_items is not None and checklist_items >= 0:
-        lines.extend(["", f"## Self-audit checklist (>= 10 points)"])
+        lines.extend(["", "## Self-audit checklist (>= 10 points)"])
         for i in range(1, checklist_items + 1):
             lines.append(f"- Point {i}: verified")
     review = tmp_path / "code-review-round-001.md"
@@ -194,6 +205,17 @@ def test_main_agent_fallback_review_requires_checklist(tmp_path: Path) -> None:
     )
     with pytest.raises(WorkflowError, match=r"(?is)(checklist|10)"):
         validate_reviewer_declaration(review)
+
+
+def test_parenthetical_legacy_independence_value_is_normalized(tmp_path: Path) -> None:
+    review = _write_review(
+        tmp_path,
+        reviewer="self",
+        independence="main-agent-fallback (sprint-017 followup-B flagged)",
+        checklist_items=12,
+    )
+
+    validate_reviewer_declaration(review)
 
 
 def test_subagent_review_without_checklist_passes(tmp_path: Path) -> None:

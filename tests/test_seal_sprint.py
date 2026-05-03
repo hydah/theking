@@ -49,6 +49,8 @@ def set_task_status(task_md: Path, *, status: str, history: list[str], current_r
 
 
 def force_task_to_done(task_dir: Path) -> None:
+    from conftest import plant_agent_run_provenance
+
     set_task_status(
         task_dir / "task.md",
         status="done",
@@ -98,7 +100,12 @@ def force_task_to_done(task_dir: Path) -> None:
     review_dir = task_dir / "review"
     review_dir.mkdir(exist_ok=True)
     (review_dir / "code-review-round-001.md").write_text(
-        "# Code Review Round 001\n\n## Context\n- forged for test\n\n## Findings\n- none\n",
+        "# Code Review Round 001\n\n"
+        "## Context\n"
+        "- forged for test\n"
+        "- Reviewer: code-reviewer\n"
+        "- Reviewer independence: subagent-via-task-tool\n\n"
+        "## Findings\n- none\n",
         encoding="utf-8",
     )
     (review_dir / "code-review-round-001.resolved.md").write_text(
@@ -131,6 +138,7 @@ def force_task_to_done(task_dir: Path) -> None:
         "- Exit: 0\n",
         encoding="utf-8",
     )
+    plant_agent_run_provenance(task_dir)
 
 
 def force_task_to_blocked(task_dir: Path) -> None:

@@ -13,7 +13,6 @@ Legacy behavior remains byte-identical.
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import sys
@@ -30,7 +29,6 @@ from validation import (  # noqa: E402
     validate_spec,
     validate_spec_section_counts,
 )
-
 
 SCRIPT_PATH = REPO_ROOT / "scripts" / "workflowctl.py"
 

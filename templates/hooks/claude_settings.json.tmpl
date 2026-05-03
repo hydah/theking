@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "(tool == \"Edit\" || tool == \"Write\") && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
+        "matcher": "(tool == \"Edit\" || tool == \"Write\" || tool == \"MultiEdit\" || tool == \"replace_in_file\" || tool == \"write_to_file\") && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
         "hooks": [
           {
             "type": "command",
@@ -12,7 +12,7 @@
         "description": "[theking] Block code edits until spec.md exists for active task"
       },
       {
-        "matcher": "(tool == \"Edit\" || tool == \"Write\") && tool_input.file_path not matches \"test\" && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
+        "matcher": "(tool == \"Edit\" || tool == \"Write\" || tool == \"MultiEdit\" || tool == \"replace_in_file\" || tool == \"write_to_file\") && tool_input.file_path not matches \"test\" && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
         "hooks": [
           {
             "type": "command",
@@ -24,7 +24,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "(tool == \"Edit\" || tool == \"Write\") && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
+        "matcher": "(tool == \"Edit\" || tool == \"Write\" || tool == \"MultiEdit\" || tool == \"replace_in_file\" || tool == \"write_to_file\") && tool_input.file_path not matches \"\\\\.theking/\" && tool_input.file_path not matches \"\\\\.claude/\" && tool_input.file_path not matches \"\\\\.codebuddy/\"",
         "hooks": [
           {
             "type": "command",

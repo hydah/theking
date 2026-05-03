@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SCRIPT = REPO_ROOT / "install.sh"
+DOGFOOD_SCRIPT = REPO_ROOT / "dogfood.sh"
 
 
 def isolated_home_env(tmp_home: Path) -> dict[str, str]:
@@ -185,3 +186,15 @@ def test_readme_documents_home_installer_flow() -> None:
     assert ".claude" in readme
     assert ".codebuddy" in readme
     assert "theking-install" in readme
+
+
+def test_dogfood_prefers_workspace_workflowctl_before_global_fallback() -> None:
+    dogfood = DOGFOOD_SCRIPT.read_text(encoding="utf-8")
+
+    venv_index = dogfood.index('WORKFLOWCTL=".venv/bin/workflowctl"')
+    uv_index = dogfood.index('WORKFLOWCTL="uv run workflowctl"')
+    global_index = dogfood.index('WORKFLOWCTL="workflowctl"')
+
+    assert venv_index < uv_index < global_index
+    assert "current workspace" in dogfood
+    assert "global workflowctl fallback" in dogfood

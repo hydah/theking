@@ -17,12 +17,9 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -32,7 +29,6 @@ from sessions import (  # noqa: E402
     compute_entry_hash,
     read_ledger,
 )
-
 
 WORKFLOWCTL = REPO_ROOT / "scripts" / "workflowctl.py"
 
@@ -263,6 +259,17 @@ def test_audit_legacy_task_silent(tmp_path: Path) -> None:
     r = run_cli(["audit", "--task-dir", str(task_dir)], cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert re.search(r"(?i)no ledger|nothing to verify|empty", r.stdout), r.stdout
+
+
+def test_audit_strict_rejects_new_task_without_ledger_entries(tmp_path: Path) -> None:
+    task_dir = _bootstrap_new_task(tmp_path)
+
+    result = run_cli(["audit", "--task-dir", str(task_dir), "--strict"], cwd=tmp_path)
+
+    assert result.returncode != 0, result.stdout
+    combined_output = result.stdout + result.stderr
+    assert re.search(r"(?i)strict", combined_output), combined_output
+    assert re.search(r"(?i)no ledger|ledger entries|empty", combined_output), combined_output
 
 
 def test_audit_strict_detects_chain_break(tmp_path: Path) -> None:

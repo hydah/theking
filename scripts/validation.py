@@ -22,7 +22,6 @@ try:
         MAX_BUNDLE_SIZE,
         SPRINT_NAME_PATTERN,
         TASK_ID_PATTERN,
-        TASK_SCHEMA_VERSION,
         THEKING_DIRNAME,
         WorkflowError,
     )
@@ -39,7 +38,6 @@ except ImportError:
         MAX_BUNDLE_SIZE,
         SPRINT_NAME_PATTERN,
         TASK_ID_PATTERN,
-        TASK_SCHEMA_VERSION,
         THEKING_DIRNAME,
         WorkflowError,
     )
@@ -208,8 +206,8 @@ def validate_task_dir(task_dir: Path, *, check_goal: bool = False) -> None:
         flow=normalize_task_flow(task_data.get("flow")),
         task_is_new=is_new_theking_task(validated),
     )
+    validate_agent_runs_ledger(task_paths.task_dir / "agent-runs.jsonl", task_data=validated)
     validate_review_requirements(task_paths.review_dir, validated)
-    validate_agent_runs_ledger(task_paths.task_dir / "agent-runs.jsonl")
 
 
 def validate_task_location(task_dir: Path) -> None:
@@ -1582,17 +1580,24 @@ AGENT_RUN_LEDGER_REQUIRED_FIELDS: frozenset[str] = frozenset(
         "notes",
     }
 )
+AGENT_RUN_SUCCESS_STATUSES: frozenset[str] = frozenset(
+    {"success", "succeeded", "passed", "pass", "ok", "command_ok"}
+)
 
 
-def validate_agent_runs_ledger(ledger_path: Path) -> None:
-    """Validate optional task-level agent run audit metadata.
+def validate_agent_runs_ledger(
+    ledger_path: Path,
+    *,
+    task_data: dict[str, Any] | None = None,
+) -> None:
+    """Validate task-level agent run audit metadata."""
 
-    The ledger is intentionally optional and non-authoritative: it helps humans
-    see which subagents were invoked, but it is not proof that an external
-    runtime actually executed those agents.
-    """
+    requires_provenance = _task_requires_agent_run_provenance(task_data)
+    required_agents = _required_agent_names(task_data) if requires_provenance else []
 
     if not ledger_path.exists():
+        if requires_provenance:
+            _raise_missing_agent_run_provenance(required_agents)
         return
     if ledger_path.is_symlink():
         raise WorkflowError("agent-runs.jsonl must not be a symlink")
@@ -1603,8 +1608,11 @@ def validate_agent_runs_ledger(ledger_path: Path) -> None:
     except (OSError, UnicodeDecodeError) as error:
         raise WorkflowError("agent-runs.jsonl must be readable UTF-8 JSONL") from error
     if not content.strip():
+        if requires_provenance:
+            _raise_missing_agent_run_provenance(required_agents)
         return
 
+    entries: list[dict[str, Any]] = []
     for line_number, raw_line in enumerate(content.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
@@ -1625,6 +1633,73 @@ def validate_agent_runs_ledger(ledger_path: Path) -> None:
                 f"agent-runs.jsonl line {line_number} is missing required fields: "
                 f"{', '.join(missing)}"
             )
+        entries.append(payload)
+
+    if requires_provenance:
+        _validate_required_agent_run_provenance(entries, required_agents, task_data)
+
+
+def _task_requires_agent_run_provenance(task_data: dict[str, Any] | None) -> bool:
+    if task_data is None:
+        return False
+    status = stringify(task_data.get("status"))
+    return (
+        is_new_theking_task(task_data)
+        and status in {"ready_to_merge", "done"}
+        and bool(_required_agent_names(task_data))
+    )
+
+
+def _required_agent_names(task_data: dict[str, Any] | None) -> list[str]:
+    if task_data is None:
+        return []
+    raw_agents = task_data.get("required_agents")
+    if not isinstance(raw_agents, list):
+        return []
+    return [stringify(agent).strip() for agent in raw_agents if stringify(agent).strip()]
+
+
+def _validate_required_agent_run_provenance(
+    entries: list[dict[str, Any]],
+    required_agents: list[str],
+    task_data: dict[str, Any] | None,
+) -> None:
+    satisfied_agents = {
+        agent
+        for agent in required_agents
+        if any(_agent_run_entry_satisfies(entry, agent, task_data) for entry in entries)
+    }
+    missing_agents = sorted(set(required_agents) - satisfied_agents)
+    if missing_agents:
+        _raise_missing_agent_run_provenance(missing_agents)
+
+
+def _agent_run_entry_satisfies(
+    entry: dict[str, Any],
+    agent: str,
+    task_data: dict[str, Any] | None,
+) -> bool:
+    if stringify(entry.get("agent")).strip() != agent:
+        return False
+    if stringify(entry.get("status")).strip().lower() not in AGENT_RUN_SUCCESS_STATUSES:
+        return False
+    if not stringify(entry.get("invocation_channel")).strip():
+        return False
+
+    task_id = stringify((task_data or {}).get("id")).strip()
+    entry_task_id = stringify(entry.get("task_id")).strip()
+    if task_id and entry_task_id == task_id:
+        return True
+
+    entry_task_path = stringify(entry.get("task_path")).strip().rstrip("/")
+    return bool(task_id and entry_task_path and entry_task_path.split("/")[-1] == task_id)
+
+
+def _raise_missing_agent_run_provenance(missing_agents: list[str]) -> None:
+    raise WorkflowError(
+        "agent-runs.jsonl missing successful provenance for required agent(s): "
+        f"{', '.join(sorted(missing_agents))}"
+    )
 
 
 HANDOFF_TARGET_SECTIONS: tuple[str, ...] = (
@@ -1875,21 +1950,21 @@ def validate_review_requirements(review_dir: Path, task_data: dict[str, Any]) ->
 
     if required_review_rounds:
         for review_round in range(1, required_review_rounds + 1):
-            ensure_review_pair(review_dir, "code", review_round)
+            ensure_review_pair(review_dir, "code", review_round, task_data)
             if requires_security_review:
-                ensure_review_pair(review_dir, "security", review_round)
+                ensure_review_pair(review_dir, "security", review_round, task_data)
             if requires_browser_e2e:
-                ensure_review_pair(review_dir, "e2e", review_round)
+                ensure_review_pair(review_dir, "e2e", review_round, task_data)
 
     if status == "changes_requested":
         if round_number < 1:
             raise WorkflowError("current_review_round must be >= 1 in changes_requested")
         for review_round in range(1, round_number):
-            ensure_review_pair(review_dir, "code", review_round)
+            ensure_review_pair(review_dir, "code", review_round, task_data)
             if requires_security_review:
-                ensure_review_pair(review_dir, "security", review_round)
+                ensure_review_pair(review_dir, "security", review_round, task_data)
             if requires_browser_e2e:
-                ensure_review_pair(review_dir, "e2e", review_round)
+                ensure_review_pair(review_dir, "e2e", review_round, task_data)
         ensure_review_file(review_dir, "code", round_number)
         if requires_security_review:
             ensure_review_file(review_dir, "security", round_number)
@@ -2141,6 +2216,14 @@ ALLOWED_REVIEWER_INDEPENDENCE = frozenset({
     "main-agent-fallback",
 })
 _REVIEWER_INDEPENDENCE_REQUIRE_CHECKLIST = frozenset({"self", "main-agent-fallback"})
+_REVIEWER_INDEPENDENCE_REQUIRE_PROVENANCE = frozenset(
+    {"subagent-via-task-tool", "subagent-via-cli"}
+)
+_REVIEW_TYPE_AGENT = {
+    "code": "code-reviewer",
+    "security": "security-reviewer",
+    "e2e": "e2e-runner",
+}
 REVIEWER_SELF_AUDIT_MIN_POINTS = 10
 
 
@@ -2162,6 +2245,13 @@ def _extract_review_field(text: str, key: str) -> str | None:
     if not value:
         return None
     return value
+
+
+def _normalize_reviewer_independence(value: str) -> str:
+    match = re.match(r"^([a-z0-9-]+)(?:\s*\(.*)?$", value.strip())
+    if match is None:
+        return value.strip()
+    return match.group(1)
 
 
 def _count_top_level_bullets_under_heading(
@@ -2195,7 +2285,13 @@ def _count_top_level_bullets_under_heading(
     return count
 
 
-def validate_reviewer_declaration(review_md_path: Path) -> None:
+def validate_reviewer_declaration(
+    review_md_path: Path,
+    *,
+    task_data: dict[str, Any] | None = None,
+    agent_runs_path: Path | None = None,
+    review_type: str = "code",
+) -> None:
     """Enforce Reviewer / Reviewer independence fields on review-round
     markdown files. Silent-pass for legacy files without the fields.
 
@@ -2214,9 +2310,28 @@ def validate_reviewer_declaration(review_md_path: Path) -> None:
 
     reviewer = _extract_review_field(text, "Reviewer")
     independence = _extract_review_field(text, "Reviewer independence")
+    if independence is not None:
+        independence = _normalize_reviewer_independence(independence)
+    requires_new_terminal_review = (
+        task_data is not None
+        and is_new_theking_task(task_data)
+        and stringify(task_data.get("status")) in {"ready_to_merge", "done"}
+    )
 
-    if reviewer is None and independence is None:
+    if reviewer is None and independence is None and not requires_new_terminal_review:
         return  # legacy review — silent pass
+
+    if requires_new_terminal_review and (reviewer is None or independence is None):
+        missing = []
+        if reviewer is None:
+            missing.append("Reviewer")
+        if independence is None:
+            missing.append("Reviewer independence")
+        raise WorkflowError(
+            f"{review_md_path.name}: {', '.join(missing)} required for "
+            "new terminal task reviews. Fill the review declaration fields "
+            "instead of leaving placeholders or relying on legacy fallback."
+        )
 
     if independence is None:
         raise WorkflowError(
@@ -2243,9 +2358,75 @@ def validate_reviewer_declaration(review_md_path: Path) -> None:
                 "or raise independence to 'subagent-via-task-tool' if an "
                 "independent subagent reviewed this round."
             )
+    _validate_new_task_reviewer_provenance(
+        review_md_path,
+        independence,
+        task_data=task_data,
+        agent_runs_path=agent_runs_path,
+        review_type=review_type,
+    )
 
 
-def ensure_review_pair(review_dir: Path, review_type: str, round_number: int) -> None:
+def _validate_new_task_reviewer_provenance(
+    review_md_path: Path,
+    independence: str,
+    *,
+    task_data: dict[str, Any] | None,
+    agent_runs_path: Path | None,
+    review_type: str,
+) -> None:
+    if task_data is None or not is_new_theking_task(task_data):
+        return
+    if stringify(task_data.get("status")) not in {"ready_to_merge", "done"}:
+        return
+
+    if independence in _REVIEWER_INDEPENDENCE_REQUIRE_CHECKLIST:
+        raise WorkflowError(
+            f"{review_md_path.name}: Reviewer independence {independence!r} "
+            "does not satisfy independent review for new terminal tasks. "
+            "Use subagent-via-task-tool or subagent-via-cli with matching "
+            "agent-runs.jsonl provenance."
+        )
+
+    if independence not in _REVIEWER_INDEPENDENCE_REQUIRE_PROVENANCE:
+        return
+
+    reviewer_agent = _REVIEW_TYPE_AGENT.get(review_type, "code-reviewer")
+    entries = _read_agent_run_entries(agent_runs_path)
+    if any(
+        _agent_run_entry_satisfies(entry, reviewer_agent, task_data)
+        and stringify(entry.get("invocation_channel")).strip() == independence
+        for entry in entries
+    ):
+        return
+
+    raise WorkflowError(
+        f"{review_md_path.name}: Reviewer independence {independence!r} "
+        f"requires matching {reviewer_agent} provenance in agent-runs.jsonl."
+    )
+
+
+def _read_agent_run_entries(agent_runs_path: Path | None) -> list[dict[str, Any]]:
+    if agent_runs_path is None or not agent_runs_path.exists():
+        return []
+    validate_agent_runs_ledger(agent_runs_path)
+    content = agent_runs_path.read_text(encoding="utf-8")
+    entries: list[dict[str, Any]] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if line:
+            payload = json.loads(line)
+            if isinstance(payload, dict):
+                entries.append(payload)
+    return entries
+
+
+def ensure_review_pair(
+    review_dir: Path,
+    review_type: str,
+    round_number: int,
+    task_data: dict[str, Any] | None = None,
+) -> None:
     base_name = f"{review_type}-review-round-{round_number:03d}"
     review_file = review_dir / f"{base_name}.md"
     resolved_file = review_dir / f"{base_name}.resolved.md"
@@ -2256,7 +2437,12 @@ def ensure_review_pair(review_dir: Path, review_type: str, round_number: int) ->
     # Reviewer independence; when the main agent self-audits, a
     # >= 10-point checklist is required. Silent-pass for legacy
     # reviews without the fields.
-    validate_reviewer_declaration(review_file)
+    validate_reviewer_declaration(
+        review_file,
+        task_data=task_data,
+        agent_runs_path=review_dir.parent / "agent-runs.jsonl",
+        review_type=review_type,
+    )
     # Sprint-010 TASK-001: harden resolved coverage once the round is paired.
     # Runs only when review + resolved both exist; legacy (no `### finding-`
     # header) files skip the gate transparently.
