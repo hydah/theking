@@ -15,9 +15,13 @@ work. It provides three responsibilities, and nothing else:
   file stable on re-runs, and raise when someone has hand-edited the
   file into disagreement with :data:`RUNTIME_CAPABILITY_MATRIX`.
 - ``load_runtime_capability`` — read the file back and expose the
-  capability dict to future validators. Missing file returns a *copy*
-  of the ``unknown`` matrix entry so callers cannot accidentally
-  mutate the canonical table.
+  capability dict to future validators. The capability *values*
+  always come from :data:`RUNTIME_CAPABILITY_MATRIX`, never from the
+  file — the file only supplies the runtime *key*, ``locked_at``, and
+  ``theking_schema_version``. This is how the table stays the
+  authoritative source: a hand-edited ``subagent_runtime_capture``
+  would be ignored at read-time even if it slipped past the write-time
+  tamper check.
 
 The write-boundary hook, the HMAC machinery, and any validator that
 actually *consumes* ``subagent_runtime_capture`` live in sprint-021
@@ -41,6 +45,7 @@ try:
         RUNTIME_STATE_SCHEMA_VERSION,
         WorkflowError,
     )
+    from .validation import ensure_local_path
 except ImportError:  # pragma: no cover — dual-import shim, mirrors scaffold.py
     from constants import (
         DEFAULT_RUNTIME_KEY,
@@ -48,11 +53,22 @@ except ImportError:  # pragma: no cover — dual-import shim, mirrors scaffold.p
         RUNTIME_STATE_SCHEMA_VERSION,
         WorkflowError,
     )
+    from validation import ensure_local_path
 
 
 RUNTIME_STATE_ENV_VAR = "THEKING_RUNTIME"
 RUNTIME_STATE_RELATIVE = Path(".theking") / "state" / "runtime.json"
 _CAPABILITY_FIELDS = ("subagent_runtime_capture", "lifecycle_hooks", "tool_names")
+
+# Pointer used in WorkflowError messages. We deliberately do NOT tell the
+# operator to "delete the file and re-run ensure" for tamper / unknown-key
+# paths — that would be a governance-leaking escape hatch (design §4 P0-8
+# and the finding-002 outcome of TASK-001 code-review-round-001). Point
+# them at the design doc + ADR-008 instead so the correct response is
+# "file an ADR / update the matrix", not "bypass the guard".
+_BOUNDARY_DESIGN_REFERENCE = (
+    ".theking/context/design-main-agent-boundary.md §4 P0-1 + ADR-008"
+)
 
 
 def _runtime_state_path(project_dir: Path) -> Path:
@@ -62,6 +78,26 @@ def _runtime_state_path(project_dir: Path) -> Path:
 def _iso_now() -> str:
     """UTC timestamp with trailing ``Z`` (project-wide convention)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ensure_state_path_safe(project_dir: Path) -> Path:
+    """Compute the state file path and reject symlink traversal.
+
+    Mirrors the pattern used across ``scripts/scaffold.py``: every state
+    write in the theking tree funnels through ``ensure_local_path`` so a
+    pre-planted symlink (e.g. `.theking/state/runtime.json ->
+    ~/.ssh/authorized_keys`) cannot be followed by ``write_runtime_state``
+    or ``load_runtime_capability``.
+    """
+    state_path = _runtime_state_path(project_dir)
+    ensure_local_path(state_path, project_dir, ".theking/state/runtime.json")
+    if state_path.is_symlink():
+        raise WorkflowError(
+            f"{state_path}: runtime.json must not be a symlink. "
+            f"This file is owned by `workflowctl ensure` and must live inside "
+            f"the project tree as a regular file. See {_BOUNDARY_DESIGN_REFERENCE}."
+        )
+    return state_path
 
 
 def detect_runtime_key(env: Mapping[str, str]) -> str:
@@ -92,18 +128,24 @@ def detect_runtime_key(env: Mapping[str, str]) -> str:
     return DEFAULT_RUNTIME_KEY
 
 
-def _canonical_state_payload(runtime_key: str, locked_at: str) -> dict[str, Any]:
+def _matrix_view(runtime_key: str) -> dict[str, Any]:
+    """Return a freshly-constructed dict that mirrors the matrix entry
+    for ``runtime_key``. Immutable fields are deep-copied so mutation
+    by the caller cannot leak back into :data:`RUNTIME_CAPABILITY_MATRIX`."""
     entry = RUNTIME_CAPABILITY_MATRIX[runtime_key]
-    # ``tool_names`` is stored as list in JSON (JSON has no tuple); keep
-    # iteration order stable so the on-disk file is deterministic.
     return {
         "runtime": runtime_key,
         "subagent_runtime_capture": bool(entry["subagent_runtime_capture"]),
         "lifecycle_hooks": bool(entry["lifecycle_hooks"]),
         "tool_names": list(cast("tuple[str, ...]", entry["tool_names"])),
-        "locked_at": locked_at,
-        "theking_schema_version": RUNTIME_STATE_SCHEMA_VERSION,
     }
+
+
+def _canonical_state_payload(runtime_key: str, locked_at: str) -> dict[str, Any]:
+    payload = _matrix_view(runtime_key)
+    payload["locked_at"] = locked_at
+    payload["theking_schema_version"] = RUNTIME_STATE_SCHEMA_VERSION
+    return payload
 
 
 def _render_state_json(payload: dict[str, Any]) -> str:
@@ -140,6 +182,13 @@ def _compare_capability_fields(existing: dict[str, Any], runtime_key: str) -> st
                 f"but RUNTIME_CAPABILITY_MATRIX[{runtime_key!r}] "
                 f"requires {expected!r}"
             )
+    schema_version = existing.get("theking_schema_version")
+    if schema_version != RUNTIME_STATE_SCHEMA_VERSION:
+        return (
+            f"runtime.json has theking_schema_version={schema_version!r} "
+            f"but this theking installation expects "
+            f"{RUNTIME_STATE_SCHEMA_VERSION!r}"
+        )
     return None
 
 
@@ -153,24 +202,29 @@ def write_runtime_state(project_dir: Path, runtime_key: str) -> Path:
       surface immediately.
     - If the file does not exist, create it with a fresh ``locked_at``.
     - If the file exists and its fields align with the matrix entry for
-      ``runtime_key``, do **not** rewrite it — we want the first
-      ``ensure`` to pin the timestamp, and a drift-free second run to
-      be a no-op (so repeated ``ensure`` does not dirty the git tree).
+      ``runtime_key`` and the schema version matches, do **not** rewrite
+      it — we want the first ``ensure`` to pin the timestamp, and a
+      drift-free second run to be a no-op (so repeated ``ensure`` does
+      not dirty the git tree).
     - If the file exists but any ``subagent_runtime_capture`` /
-      ``lifecycle_hooks`` / ``tool_names`` field disagrees with the
-      matrix, raise ``WorkflowError``. The operator either hand-edited
-      the file, or the matrix changed — either way a human should look
-      at it before ``ensure`` silently "fixes" it.
+      ``lifecycle_hooks`` / ``tool_names`` / ``theking_schema_version``
+      field disagrees with the matrix, raise ``WorkflowError``. The
+      operator either hand-edited the file or the matrix changed — a
+      human must triage before ``ensure`` silently "fixes" it. The error
+      message points at the design doc, not at a workaround command,
+      because this boundary is what the whole main-agent-boundary
+      sprint is built to defend (design §4 P0-8).
 
     Returns the absolute path written (or validated).
     """
     if runtime_key not in RUNTIME_CAPABILITY_MATRIX:
         raise WorkflowError(
             f"runtime {runtime_key!r} is not listed in RUNTIME_CAPABILITY_MATRIX; "
-            f"allowed keys: {sorted(RUNTIME_CAPABILITY_MATRIX)}"
+            f"allowed keys: {sorted(RUNTIME_CAPABILITY_MATRIX)}. "
+            f"Extending the matrix requires an ADR — see {_BOUNDARY_DESIGN_REFERENCE}."
         )
 
-    state_path = _runtime_state_path(project_dir)
+    state_path = _ensure_state_path_safe(project_dir)
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
     if state_path.exists():
@@ -180,20 +234,25 @@ def write_runtime_state(project_dir: Path, runtime_key: str) -> Path:
         except json.JSONDecodeError as error:
             raise WorkflowError(
                 f"{state_path}: runtime.json is not valid JSON ({error.msg}). "
-                "Delete the file and re-run `workflowctl ensure` after verifying "
-                "no local customization is worth preserving."
+                f"This file is owned by `workflowctl ensure`; if it is corrupted "
+                f"from an interrupted write, repair it to match the "
+                f"RUNTIME_CAPABILITY_MATRIX entry for the current runtime "
+                f"({runtime_key!r}) and commit. See {_BOUNDARY_DESIGN_REFERENCE}."
             ) from error
         if not isinstance(existing, dict):
             raise WorkflowError(
-                f"{state_path}: runtime.json must contain a JSON object at the top level."
+                f"{state_path}: runtime.json must contain a JSON object at the top level. "
+                f"See {_BOUNDARY_DESIGN_REFERENCE} for the canonical shape."
             )
         drift = _compare_capability_fields(existing, runtime_key)
         if drift is not None:
             raise WorkflowError(
                 f"{state_path}: {drift}. "
-                "runtime capability is a static table — hand-editing runtime.json "
-                "is not supported. If the matrix was updated intentionally, "
-                "delete runtime.json and re-run `workflowctl ensure`."
+                f"runtime.json is authoritative only because `workflowctl ensure` "
+                f"writes it from the static RUNTIME_CAPABILITY_MATRIX. "
+                f"Hand-editing this file is unsupported; if the matrix needs to "
+                f"change, file an ADR that covers the migration path. "
+                f"See {_BOUNDARY_DESIGN_REFERENCE}."
             )
         # Matches on every field we care about; leave the file alone so
         # locked_at stays pinned to the first ensure.
@@ -207,59 +266,67 @@ def write_runtime_state(project_dir: Path, runtime_key: str) -> Path:
 def load_runtime_capability(project_dir: Path) -> dict[str, Any]:
     """Read the capability snapshot back as a dict.
 
-    - If ``runtime.json`` is missing, return a *copy* of the ``unknown``
-      matrix entry plus ``runtime="unknown"`` and no ``locked_at``.
-      Callers must not mutate their result expecting changes to
-      propagate — the returned dict is freshly constructed.
-    - If the file exists but names an unknown runtime key, raise
-      ``WorkflowError``. Silent fallback to ``unknown`` would mask a
-      real problem (someone shipped an unsupported runtime name and
-      expects behaviour that isn't there).
-    - If the file is malformed JSON, raise so the operator notices.
+    Trust model:
 
-    The result always contains ``runtime`` / ``subagent_runtime_capture``
-    / ``lifecycle_hooks`` / ``tool_names``; ``locked_at`` and
-    ``theking_schema_version`` are present only when the file exists.
+    - The ``runtime`` key is the only file-supplied field that decides
+      behaviour; every capability value (``subagent_runtime_capture`` /
+      ``lifecycle_hooks`` / ``tool_names``) is resolved from
+      :data:`RUNTIME_CAPABILITY_MATRIX` against the key at read time.
+      A hand-edit that flips ``subagent_runtime_capture`` in the file
+      is therefore ignored — read-time still returns the matrix value.
+      This closes the finding-001 gap from TASK-001 code-review-round-001:
+      we can no longer be fooled by on-disk tampering between ensure
+      runs.
+    - Schema-version mismatch is rejected so future migrations cannot
+      accidentally consume stale snapshots.
+    - Missing ``runtime.json`` returns a :func:`_matrix_view` of the
+      ``unknown`` runtime. The returned dict is freshly constructed on
+      every call so callers mutating their result cannot leak into
+      ``RUNTIME_CAPABILITY_MATRIX``.
+    - Malformed JSON, non-dict top level, and unknown-runtime key all
+      raise :class:`WorkflowError`. Silent fallback would mask the
+      kinds of local edits we want flagged.
     """
-    state_path = _runtime_state_path(project_dir)
+    state_path = _ensure_state_path_safe(project_dir)
     if not state_path.exists():
-        entry = RUNTIME_CAPABILITY_MATRIX[DEFAULT_RUNTIME_KEY]
-        return {
-            "runtime": DEFAULT_RUNTIME_KEY,
-            "subagent_runtime_capture": bool(entry["subagent_runtime_capture"]),
-            "lifecycle_hooks": bool(entry["lifecycle_hooks"]),
-            "tool_names": list(cast("tuple[str, ...]", entry["tool_names"])),
-        }
+        return _matrix_view(DEFAULT_RUNTIME_KEY)
 
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise WorkflowError(
             f"{state_path}: runtime.json is not valid JSON ({error.msg}). "
-            "Repair the file or delete it and re-run `workflowctl ensure`."
+            f"Repair the file to match the RUNTIME_CAPABILITY_MATRIX entry "
+            f"for the current runtime; see {_BOUNDARY_DESIGN_REFERENCE}."
         ) from error
     if not isinstance(data, dict):
         raise WorkflowError(
-            f"{state_path}: runtime.json must contain a JSON object at the top level."
+            f"{state_path}: runtime.json must contain a JSON object at the top level. "
+            f"See {_BOUNDARY_DESIGN_REFERENCE} for the canonical shape."
         )
     runtime_key = data.get("runtime")
     if runtime_key not in RUNTIME_CAPABILITY_MATRIX:
         raise WorkflowError(
             f"{state_path}: runtime={runtime_key!r} is not listed in "
             f"RUNTIME_CAPABILITY_MATRIX (allowed: {sorted(RUNTIME_CAPABILITY_MATRIX)}). "
-            "Either update the matrix via an ADR or delete runtime.json and "
-            "re-run `workflowctl ensure`."
+            f"Extending the matrix requires an ADR; see {_BOUNDARY_DESIGN_REFERENCE}."
         )
-    # Return a fresh copy so callers that mutate do not corrupt the file
-    # image and do not alias the JSON-parsed dict.
-    return {
-        "runtime": runtime_key,
-        "subagent_runtime_capture": bool(data.get("subagent_runtime_capture")),
-        "lifecycle_hooks": bool(data.get("lifecycle_hooks")),
-        "tool_names": list(data.get("tool_names") or []),
-        "locked_at": data.get("locked_at"),
-        "theking_schema_version": data.get("theking_schema_version"),
-    }
+
+    schema_version = data.get("theking_schema_version")
+    if schema_version != RUNTIME_STATE_SCHEMA_VERSION:
+        raise WorkflowError(
+            f"{state_path}: theking_schema_version={schema_version!r} but "
+            f"this theking installation expects {RUNTIME_STATE_SCHEMA_VERSION!r}. "
+            f"A schema bump must be accompanied by a migration ADR; "
+            f"see {_BOUNDARY_DESIGN_REFERENCE}."
+        )
+
+    # Capability values come from the matrix, not from disk. Attach the
+    # file-supplied metadata (locked_at / schema version) on top.
+    view = _matrix_view(runtime_key)
+    view["locked_at"] = data.get("locked_at")
+    view["theking_schema_version"] = schema_version
+    return view
 
 
 def detect_and_write_runtime_state(project_dir: Path, env: Mapping[str, str] | None = None) -> Path:

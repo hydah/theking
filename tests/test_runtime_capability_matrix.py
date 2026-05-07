@@ -267,6 +267,124 @@ def test_load_runtime_capability_malformed_json_rejects(tmp_path: Path) -> None:
         load_runtime_capability(project_dir)
 
 
+def test_load_runtime_capability_ignores_tampered_capability_values(tmp_path: Path) -> None:
+    """finding-001 regression: capability values come from the matrix,
+    not from disk. A hand-edit that flips ``subagent_runtime_capture``
+    from False to True must be ignored at read-time (the runtime key is
+    the only disk-supplied field that decides behaviour)."""
+    from scripts.runtime_state import load_runtime_capability
+
+    project_dir = tmp_path / "proj"
+    state_dir = project_dir / ".theking" / "state"
+    state_dir.mkdir(parents=True)
+    tampered = {
+        "runtime": "kimi-cli",  # matrix says subagent_runtime_capture=False
+        "subagent_runtime_capture": True,  # attacker flip
+        "lifecycle_hooks": True,  # attacker flip
+        "tool_names": ["Evil"],  # attacker flip
+        "locked_at": "2026-05-07T00:00:00Z",
+        "theking_schema_version": 1,
+    }
+    (state_dir / "runtime.json").write_text(
+        json.dumps(tampered, indent=2) + "\n", encoding="utf-8"
+    )
+    cap = load_runtime_capability(project_dir)
+    # Matrix wins; file was ignored on all capability fields.
+    assert cap["subagent_runtime_capture"] is False
+    assert cap["lifecycle_hooks"] is False
+    assert cap["tool_names"] == []
+
+
+def test_load_runtime_capability_rejects_schema_version_mismatch(tmp_path: Path) -> None:
+    """finding-005 regression: the RUNTIME_STATE_SCHEMA_VERSION constant
+    is enforced, not decorative. Files produced by a future theking
+    schema must not be silently consumed by today's loader."""
+    from scripts.constants import WorkflowError
+    from scripts.runtime_state import load_runtime_capability
+
+    project_dir = tmp_path / "proj"
+    state_dir = project_dir / ".theking" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "runtime.json").write_text(
+        json.dumps(
+            {
+                "runtime": "unknown",
+                "subagent_runtime_capture": False,
+                "lifecycle_hooks": False,
+                "tool_names": [],
+                "locked_at": "2026-05-07T00:00:00Z",
+                "theking_schema_version": 99,  # future version
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(WorkflowError, match="theking_schema_version"):
+        load_runtime_capability(project_dir)
+
+
+def test_write_runtime_state_rejects_malformed_existing(tmp_path: Path) -> None:
+    """finding-004 regression: malformed JSON on the second write path
+    must raise, not silently overwrite. (The first-write path has no
+    file to parse, so only the second call exercises this.)"""
+    from scripts.constants import WorkflowError
+    from scripts.runtime_state import write_runtime_state
+
+    project_dir = tmp_path / "proj"
+    state_dir = project_dir / ".theking" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "runtime.json").write_text("{garbage", encoding="utf-8")
+    with pytest.raises(WorkflowError, match="runtime.json"):
+        write_runtime_state(project_dir, "unknown")
+
+
+def test_write_runtime_state_rejects_non_object_top_level(tmp_path: Path) -> None:
+    """finding-004 regression: a JSON list (or scalar) at the top level
+    must fail rather than be coerced into a dict."""
+    from scripts.constants import WorkflowError
+    from scripts.runtime_state import write_runtime_state
+
+    project_dir = tmp_path / "proj"
+    state_dir = project_dir / ".theking" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "runtime.json").write_text(
+        json.dumps([1, 2, 3]) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(WorkflowError, match="JSON object"):
+        write_runtime_state(project_dir, "unknown")
+
+
+def test_load_runtime_capability_rejects_non_object_top_level(tmp_path: Path) -> None:
+    """finding-004 regression: the load-side also rejects non-dict top-level."""
+    from scripts.constants import WorkflowError
+    from scripts.runtime_state import load_runtime_capability
+
+    project_dir = tmp_path / "proj"
+    state_dir = project_dir / ".theking" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "runtime.json").write_text("[1, 2, 3]\n", encoding="utf-8")
+    with pytest.raises(WorkflowError, match="JSON object"):
+        load_runtime_capability(project_dir)
+
+
+def test_write_runtime_state_rejects_symlink(tmp_path: Path) -> None:
+    """finding-003 regression: ensure_local_path blocks a pre-planted
+    symlink at .theking/state/runtime.json."""
+    from scripts.constants import WorkflowError
+    from scripts.runtime_state import write_runtime_state
+
+    project_dir = tmp_path / "proj"
+    state_dir = project_dir / ".theking" / "state"
+    state_dir.mkdir(parents=True)
+    target = tmp_path / "outside.json"
+    target.write_text("{}\n", encoding="utf-8")
+    (state_dir / "runtime.json").symlink_to(target)
+
+    with pytest.raises(WorkflowError):
+        write_runtime_state(project_dir, "unknown")
+
+
 # --- ensure integration ----------------------------------------------
 
 
