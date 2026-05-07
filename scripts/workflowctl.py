@@ -24,6 +24,7 @@ try:
         format_report_text,
         run_diagnostics,
     )
+    from .runtime_state import detect_and_write_runtime_state
     from .scaffold import (
         RUNTIME_BACKUP_ROOT_RELATIVE,
         collect_managed_runtime_artifacts,
@@ -114,6 +115,7 @@ except ImportError:
         format_report_text,
         run_diagnostics,
     )
+    from runtime_state import detect_and_write_runtime_state
     from scaffold import (
         RUNTIME_BACKUP_ROOT_RELATIVE,
         collect_managed_runtime_artifacts,
@@ -1622,6 +1624,13 @@ def handle_ensure(args: argparse.Namespace) -> None:
             project_title=humanize_slug(project_slug),
         ),
     )
+
+    # sprint-021 TASK-001 (design-main-agent-boundary §4 P0-1): pin the
+    # runtime capability snapshot once ensure has produced the scaffold.
+    # Kept last so a scaffold failure does not leave a stale runtime.json
+    # behind; kept after project.md so the directory layout is always
+    # complete before we add state files.
+    detect_and_write_runtime_state(project_dir)
 
     theking_dir = get_theking_dir(project_dir)
     print(f"OK {theking_dir}")

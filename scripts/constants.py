@@ -86,6 +86,70 @@ class WorkflowError(Exception):
     pass
 
 
+# sprint-021 TASK-001 (design-main-agent-boundary §4 P0-1): static table
+# that declares which runtimes can capture subagent invocations and
+# lifecycle hooks. theking gates that would otherwise allow a
+# ``main-agent-fallback`` / ``self`` review path must read this table
+# rather than believe any runtime self-report coming from task.md /
+# plan.json / review.md.
+#
+# Field contract:
+#   subagent_runtime_capture : bool
+#       Whether `workflowctl spawn-subagent` can hand a subagent task
+#       to the runtime and capture the result as a signed provenance
+#       entry (sprint-021 段 B will exercise this; 段 A only records
+#       the bit).
+#   lifecycle_hooks : bool
+#       Whether the runtime can fire PreToolUse / UserPromptSubmit
+#       hooks defined under .theking/hooks/. Decides whether the
+#       "write-boundary" hook (段 B P0-4) is enforceable at all.
+#   tool_names : tuple[str, ...]
+#       Canonical file-editing tool names exposed by the runtime.
+#       Consumed by the future write-boundary hook to pattern-match
+#       PreToolUse events; an empty tuple means the runtime either
+#       has no tool API or does not expose editing tools we recognize.
+#
+# Keys are lowercase canonical identifiers; see `detect_runtime_key`
+# in scripts/runtime_state.py for matching rules. Matrix is closed —
+# adding a runtime requires an ADR.
+RUNTIME_CAPABILITY_MATRIX: dict[str, dict[str, object]] = {
+    "claude-code": {
+        "subagent_runtime_capture": True,
+        "lifecycle_hooks": True,
+        "tool_names": ("Edit", "Write", "MultiEdit"),
+    },
+    "codebuddy": {
+        "subagent_runtime_capture": True,
+        "lifecycle_hooks": True,
+        "tool_names": ("replace_in_file", "write_to_file", "Edit", "Write"),
+    },
+    "kimi-cli": {
+        "subagent_runtime_capture": False,
+        "lifecycle_hooks": False,
+        "tool_names": (),
+    },
+    "copilot": {
+        "subagent_runtime_capture": False,
+        "lifecycle_hooks": False,
+        "tool_names": (),
+    },
+    "unknown": {
+        "subagent_runtime_capture": False,
+        "lifecycle_hooks": False,
+        "tool_names": (),
+    },
+}
+
+# Default runtime key returned by `detect_runtime_key` when the
+# environment does not identify a known runtime. Anchored as its own
+# constant so validators and error messages can refer to it by name.
+DEFAULT_RUNTIME_KEY = "unknown"
+
+# Schema version for .theking/state/runtime.json. Bump when a field is
+# added/removed so stale files surface as WorkflowError on load.
+RUNTIME_STATE_SCHEMA_VERSION = 1
+
+
 # --- Scaffold manifest (ensure_theking_scaffold source data) ---
 # Each tuple is (output filename, template name). Keeping these as data lets
 # callers add / remove scaffold artifacts without editing the scaffold function.
