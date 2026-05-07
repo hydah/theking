@@ -20,6 +20,7 @@ try:
         next_index,
         parse_frontmatter,
         render_template,
+        normalize_risk_tags,
         serialize_frontmatter_string,
         slugify,
         stringify,
@@ -32,6 +33,7 @@ except ImportError:
         next_index,
         parse_frontmatter,
         render_template,
+        normalize_risk_tags,
         serialize_frontmatter_string,
         slugify,
         stringify,
@@ -414,6 +416,7 @@ def write_task_files(
     requires_security_review: bool,
     required_agents: list[str],
     depends_on: list[str],
+    risk_tags: list[str] | None = None,
     spec_hints: dict[str, list[str]] | None = None,
     bundle: str | None = None,
     review_mode: str = "light",
@@ -440,6 +443,8 @@ def write_task_files(
         if depends_on
         else ""
     )
+    normalized_risk_tags = normalize_risk_tags(risk_tags)
+    risk_tags_block = "\n".join(f"  - {risk_tag}" for risk_tag in normalized_risk_tags)
     bundle_block = f"bundle: {bundle}\n" if bundle else ""
     task_md = task_dir / "task.md"
     task_md.write_text(
@@ -452,6 +457,7 @@ def write_task_files(
             verification_profile_block="\n".join(f"  - {p}" for p in verification_profile),
             requires_security_review=str(requires_security_review).lower(),
             required_agents_block="\n".join(f"  - {a}" for a in required_agents),
+            risk_tags_block=risk_tags_block,
             depends_on_block=depends_on_block,
             bundle_block=bundle_block,
             review_mode=review_mode,

@@ -72,6 +72,7 @@ For each task, you MUST specify ALL of the following. Fields marked 🔑 are **s
 - **task_type**: One of the 15 allowed tokens (see *task_type 决策树* below). Pick from the table; do not invent new tokens (e.g. `feature`).
 - **execution_profile**: `web.browser` | `backend.http` | `backend.cli` | `backend.job`. Must pair with `task_type` per the *兼容矩阵*.
 - **depends_on**: List of task slugs this task depends on
+- **risk_tags**: List of risk tags from the closed set: `auth`, `input`, `api`, `external-api`, `streaming-media`, `realtime`, `config`, `browser`, `data-migration`, `webrtc`, `websocket`. Use `[]` when no tag applies.
 - **description**: What this task delivers (1-2 sentences)
 - 🔑 **scope** (string array, min 3 items): What files/functions this task touches. Pull from the Phase 1 brief's file:line anchors. Do NOT write vague descriptions — write concrete file paths and function names.
 - 🔑 **non_goals** (string array, min 2 items): What this task explicitly does NOT cover. Especially important: things the Phase 1 brief identified as "looks related but isn't."
@@ -183,6 +184,7 @@ Also output a short Markdown companion note outside the JSON block titled `初�
       "task_type": "general",
       "execution_profile": "backend.cli",
       "depends_on": [],
+      "risk_tags": [],
       "description": "What this task delivers in 1-2 sentences.",
       "review_mode": "light",
       "scope": [
@@ -219,6 +221,7 @@ Also output a short Markdown companion note outside the JSON block titled `初�
       "task_type": "api",
       "execution_profile": "backend.http",
       "depends_on": ["kebab-case-1"],
+      "risk_tags": ["api", "input"],
       "review_mode": "full",
       "description": "Expose the API surface that uses Task 1's core behavior.",
       "scope": [

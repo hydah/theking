@@ -131,6 +131,7 @@ def test_validate_task_metadata_accepts_new_task() -> None:
     data = _minimal_valid_task_data()
     data["theking_schema_version"] = 1
     data["created_at"] = "2026-05-02T22:30:00Z"
+    data["risk_tags"] = []
     result = validate_task_metadata(data)
     assert result["theking_schema_version"] == 1
     assert result["created_at"] == "2026-05-02T22:30:00Z"
@@ -160,6 +161,7 @@ def test_validate_task_metadata_rejects_schema_version_negative() -> None:
 def test_validate_task_metadata_rejects_created_at_without_timezone() -> None:
     data = _minimal_valid_task_data()
     data["theking_schema_version"] = 1
+    data["risk_tags"] = []
     data["created_at"] = "2026-05-02T22:30:00"  # no Z, no offset
     with pytest.raises(WorkflowError, match=r"(?is)created_at"):
         validate_task_metadata(data)
@@ -168,6 +170,7 @@ def test_validate_task_metadata_rejects_created_at_without_timezone() -> None:
 def test_validate_task_metadata_rejects_created_at_empty() -> None:
     data = _minimal_valid_task_data()
     data["theking_schema_version"] = 1
+    data["risk_tags"] = []
     data["created_at"] = ""
     with pytest.raises(WorkflowError, match=r"(?is)created_at"):
         validate_task_metadata(data)
@@ -176,6 +179,7 @@ def test_validate_task_metadata_rejects_created_at_empty() -> None:
 def test_validate_task_metadata_rejects_created_at_non_iso() -> None:
     data = _minimal_valid_task_data()
     data["theking_schema_version"] = 1
+    data["risk_tags"] = []
     data["created_at"] = "yesterday at noon"
     with pytest.raises(WorkflowError, match=r"(?is)created_at"):
         validate_task_metadata(data)
@@ -185,6 +189,7 @@ def test_validate_task_metadata_accepts_created_at_with_plus_zero() -> None:
     """+00:00 offset is equivalent to Z per ISO8601."""
     data = _minimal_valid_task_data()
     data["theking_schema_version"] = 1
+    data["risk_tags"] = []
     data["created_at"] = "2026-05-02T22:30:00+00:00"
     result = validate_task_metadata(data)
     assert result["created_at"] == "2026-05-02T22:30:00+00:00"

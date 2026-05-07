@@ -309,6 +309,7 @@ def mark_task_as_new(task_dir: Path) -> None:
             "current_review_round:",
             "created_at: 2026-05-02T16:29:04Z\n"
             "theking_schema_version: 1\n"
+            "risk_tags:\n"
             "current_review_round:",
             1,
         ),
@@ -526,7 +527,7 @@ def test_check_rejects_new_terminal_self_or_fallback_review(
 
     assert result.returncode != 0, result.stderr
     assert "independent review" in result.stderr
-    assert independence in result.stderr
+    assert "main-agent-fallback" not in result.stderr
 
 
 @pytest.mark.parametrize("independence", ["subagent-via-task-tool", "subagent-via-cli"])

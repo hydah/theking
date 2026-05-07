@@ -13,6 +13,7 @@ try:
     from .constants import (
         ALLOWED_EXECUTION_PROFILES,
         ALLOWED_REVIEW_MODES,
+        ALLOWED_RISK_TAGS,
         ALLOWED_STATUSES,
         ALLOWED_TASK_TYPE_TOKENS,
         ALLOWED_TRANSITIONS,
@@ -29,6 +30,7 @@ except ImportError:
     from constants import (
         ALLOWED_EXECUTION_PROFILES,
         ALLOWED_REVIEW_MODES,
+        ALLOWED_RISK_TAGS,
         ALLOWED_STATUSES,
         ALLOWED_TASK_TYPE_TOKENS,
         ALLOWED_TRANSITIONS,
@@ -197,6 +199,7 @@ def validate_task_dir(task_dir: Path, *, check_goal: bool = False) -> None:
 
     task_data = parse_frontmatter(task_paths.task_md.read_text(encoding="utf-8"))
     validated = validate_task_metadata(task_data)
+    validate_task_flow_lock(task_paths.task_dir, validated)
     if stringify(validated["id"]) != task_paths.task_dir.name:
         raise WorkflowError("task id must match the task directory name")
     validate_verification_layout(task_paths.verification_dir, validated)
@@ -239,6 +242,10 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
     title = task_data["title"]
     task_type = normalize_task_type(stringify(task_data["task_type"]))
     execution_profile = normalize_execution_profile(stringify(task_data["execution_profile"]))
+    risk_tags = normalize_risk_tags(
+        task_data.get("risk_tags"),
+        require_explicit=is_new_theking_task(task_data),
+    )
     validate_task_contract(task_type, execution_profile)
     if not isinstance(title, str):
         raise WorkflowError("title must be a string")
@@ -287,9 +294,9 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
             f"review rounds: expected {expected_review_round}"
         )
 
-    expected_requires_security_review = task_requires_security_review(task_type, execution_profile)
+    expected_requires_security_review = task_requires_security_review(task_type, execution_profile, risk_tags)
     expected_verification_profile = infer_verification_profile(execution_profile)
-    expected_agents = infer_required_agents(task_type, execution_profile)
+    expected_agents = infer_required_agents(task_type, execution_profile, risk_tags)
     legacy_expected_agents = ["planner", *expected_agents]
 
     if task_data["requires_security_review"] != expected_requires_security_review:
@@ -347,6 +354,7 @@ def validate_task_metadata(task_data: dict[str, Any]) -> dict[str, Any]:
         "id": task_id,
         "task_type": task_type,
         "execution_profile": execution_profile,
+        "risk_tags": risk_tags,
         "review_mode": review_mode,
     }
 
@@ -542,6 +550,29 @@ def _git_head_commit_paths(project_dir: Path) -> list[str]:
     return [line for line in r2.stdout.splitlines() if line.strip()]
 
 
+def _git_current_head(project_dir: Path) -> str | None:
+    import subprocess as _sp
+
+    try:
+        result = _sp.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=project_dir, capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _task_planned_git_head(task_dir: Path) -> str | None:
+    for entry in reversed(_read_task_ledger_entries(task_dir)):
+        if entry.get("type") == "transition" and entry.get("to_status") == "planned":
+            git_head = stringify(entry.get("git_head", ""))
+            return git_head or None
+    return None
+
+
 def validate_red_transition_diff(
     task_paths: Any,
     project_dir: Path,
@@ -574,7 +605,12 @@ def validate_red_transition_diff(
         return
 
     paths_to_check = set(_git_staged_paths(project_dir))
-    paths_to_check.update(_git_head_commit_paths(project_dir))
+    planned_git_head = _task_planned_git_head(task_paths.task_dir)
+    current_head = _git_current_head(project_dir)
+    # The planned transition's git_head is the task's red-check baseline;
+    # production files in older commits belong to prior tasks, not this red attempt.
+    if planned_git_head is None or planned_git_head != current_head:
+        paths_to_check.update(_git_head_commit_paths(project_dir))
     if not paths_to_check:
         return
 
@@ -639,6 +675,80 @@ def normalize_task_flow(value: Any) -> str:
             f"{sorted(ALLOWED_TASK_FLOWS)}"
         )
     return text
+
+
+def _task_reached_planned_or_later(task_data: dict[str, Any]) -> bool:
+    return any(stringify(status) != "draft" for status in task_data.get("status_history", []))
+
+
+def _read_task_ledger_entries(task_dir: Path) -> list[dict[str, Any]]:
+    ledger_path = task_dir / "ledger.jsonl"
+    if not ledger_path.exists():
+        return []
+    entries: list[dict[str, Any]] = []
+    for raw_line in ledger_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            entries.append(payload)
+    return entries
+
+
+def _latest_flow_lock_state(task_dir: Path) -> tuple[str, str | None]:
+    for entry in reversed(_read_task_ledger_entries(task_dir)):
+        entry_type = entry.get("type")
+        if entry_type == "retriage":
+            return ("retriaged", None)
+        if entry_type != "transition" or entry.get("to_status") != "planned":
+            continue
+        if "flow" not in entry:
+            continue
+        return ("locked", normalize_task_flow(entry.get("flow")))
+    return ("missing", None)
+
+
+def validate_task_flow_lock(task_dir: Path, task_data: dict[str, Any]) -> None:
+    """Reject silent flow edits after a task has entered planned or later.
+
+    The lock source is the CLI-owned transition ledger entry written when
+    `advance-status --to-status planned` succeeds. Historical tasks that
+    predate this field and do not explicitly opt into a non-default flow keep
+    validating as `full` for backward compatibility.
+    """
+    if not _task_reached_planned_or_later(task_data):
+        return
+
+    current_flow = normalize_task_flow(task_data.get("flow"))
+    lock_state, locked_flow = _latest_flow_lock_state(task_dir)
+    if lock_state == "retriaged":
+        raise WorkflowError(
+            "task.md status reached planned after a retriage, but no new "
+            "CLI flow-lock ledger entry exists after that retriage. Restore "
+            "the task to draft and run `workflowctl advance-status --to-status planned` "
+            "so the new flow is locked by the CLI."
+        )
+    if locked_flow is None:
+        if task_data.get("flow") is None and current_flow == "full":
+            return
+        raise WorkflowError(
+            "task.md flow is set after the task reached planned, but no CLI "
+            "flow-lock ledger entry exists. Restore the prior flow and run "
+            "`workflowctl retriage --task-dir <TASK_DIR> --to-flow <flow> "
+            "--reason <why>` if the original triage decision was wrong."
+        )
+
+    if current_flow != locked_flow:
+        raise WorkflowError(
+            f"task.md flow changed from locked value {locked_flow!r} to "
+            f"{current_flow!r}. Flow cannot be edited silently after planned; "
+            "run `workflowctl retriage --task-dir <TASK_DIR> --to-flow <flow> "
+            "--reason <why>` to reset the task to draft and record the decision."
+        )
 
 
 def count_spec_section_items(section_body: str) -> int:
@@ -721,8 +831,9 @@ def validate_spec_section_counts(
             raise WorkflowError(
                 f"spec.md '{heading}' has {observed} item(s); "
                 f"{flow} flow requires >= {minimum}. "
-                "Either add more items, or switch this task to lightweight "
-                "flow by setting `flow: lightweight` in task.md frontmatter."
+                f"Add more {heading} items before advancing to red. "
+                "If the triage decision was wrong, run `workflowctl retriage` "
+                "so the flow change is recorded."
             )
 
 
@@ -766,8 +877,9 @@ def _validate_edge_cases_subsections_or_flat(
             raise WorkflowError(
                 f"spec.md 'Edge Cases' has {observed} item(s); "
                 f"{flow} flow requires >= {legacy_minimum}. "
-                "Either add more items, or switch this task to lightweight "
-                "flow by setting `flow: lightweight` in task.md frontmatter."
+                "Add more Edge Cases items before advancing to red. "
+                "If the triage decision was wrong, run `workflowctl retriage` "
+                "so the flow change is recorded."
             )
         return
 
@@ -793,9 +905,9 @@ def _validate_edge_cases_subsections_or_flat(
             raise WorkflowError(
                 f"spec.md 'Edge Cases / {sub_name}' has {observed} item(s); "
                 f"{flow} flow requires >= {minimum}. "
-                "Either add more items under that subsection, or switch "
-                "this task to lightweight flow by setting "
-                "`flow: lightweight` in task.md frontmatter."
+                "Add more items under that subsection before advancing to red. "
+                "If the triage decision was wrong, run `workflowctl retriage` "
+                "so the flow change is recorded."
             )
 
 
@@ -2330,20 +2442,19 @@ def validate_reviewer_declaration(
         raise WorkflowError(
             f"{review_md_path.name}: {', '.join(missing)} required for "
             "new terminal task reviews. Fill the review declaration fields "
-            "instead of leaving placeholders or relying on legacy fallback."
+            "instead of leaving placeholders or relying on legacy behavior."
         )
 
     if independence is None:
         raise WorkflowError(
             f"{review_md_path.name}: 'Reviewer:' declared but "
-            "'Reviewer independence:' missing. Add one of: "
-            f"{', '.join(sorted(ALLOWED_REVIEWER_INDEPENDENCE))}."
+            "'Reviewer independence:' missing. Fill the declaration with "
+            "a supported value and matching provenance."
         )
     if independence not in ALLOWED_REVIEWER_INDEPENDENCE:
         raise WorkflowError(
-            f"{review_md_path.name}: Reviewer independence "
-            f"{independence!r} is not in the allowed set "
-            f"{sorted(ALLOWED_REVIEWER_INDEPENDENCE)}."
+            f"{review_md_path.name}: Reviewer independence value is not supported. "
+            "Fill the declaration with a supported value and matching provenance."
         )
     if independence in _REVIEWER_INDEPENDENCE_REQUIRE_CHECKLIST:
         observed = _count_top_level_bullets_under_heading(
@@ -2351,12 +2462,11 @@ def validate_reviewer_declaration(
         )
         if observed < REVIEWER_SELF_AUDIT_MIN_POINTS:
             raise WorkflowError(
-                f"{review_md_path.name}: Reviewer independence is "
-                f"{independence!r}, which requires a Self-audit checklist "
+                f"{review_md_path.name}: This reviewer independence mode requires "
+                "a Self-audit checklist "
                 f"with >= {REVIEWER_SELF_AUDIT_MIN_POINTS} top-level "
-                f"bullets; found {observed}. Add more checklist items, "
-                "or raise independence to 'subagent-via-task-tool' if an "
-                "independent subagent reviewed this round."
+                f"bullets; found {observed}. Complete the checklist with "
+                "substantive review points before advancing this round."
             )
     _validate_new_task_reviewer_provenance(
         review_md_path,
@@ -2382,8 +2492,8 @@ def _validate_new_task_reviewer_provenance(
 
     if independence in _REVIEWER_INDEPENDENCE_REQUIRE_CHECKLIST:
         raise WorkflowError(
-            f"{review_md_path.name}: Reviewer independence {independence!r} "
-            "does not satisfy independent review for new terminal tasks. "
+            f"{review_md_path.name}: This reviewer independence mode does not "
+            "satisfy independent review for new terminal tasks. "
             "Use subagent-via-task-tool or subagent-via-cli with matching "
             "agent-runs.jsonl provenance."
         )
@@ -2783,16 +2893,65 @@ def infer_verification_profile(execution_profile: str) -> list[str]:
     return [execution_profile]
 
 
-def infer_required_agents(task_type: str, execution_profile: str) -> list[str]:
+def normalize_risk_tags(value: Any, *, require_explicit: bool = False) -> list[str]:
+    if value is None:
+        if require_explicit:
+            raise WorkflowError("risk_tags must be an explicit list for new tasks")
+        return []
+    if not isinstance(value, list):
+        raise WorkflowError("risk_tags must be a list")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise WorkflowError(f"risk_tags item {index} must be a string")
+        risk_tag = item.strip().lower()
+        if not risk_tag:
+            raise WorkflowError(f"risk_tags item {index} must not be empty")
+        if risk_tag not in ALLOWED_RISK_TAGS:
+            raise WorkflowError(f"risk_tags contains unknown tag: {risk_tag}")
+        if risk_tag in seen:
+            continue
+        seen.add(risk_tag)
+        normalized.append(risk_tag)
+    return normalized
+
+
+def _append_unique(items: list[str], item: str) -> list[str]:
+    if item in items:
+        return items
+    return [*items, item]
+
+
+def infer_required_agents(
+    task_type: str,
+    execution_profile: str,
+    risk_tags: list[str] | None = None,
+) -> list[str]:
+    normalized_risk_tags = normalize_risk_tags(risk_tags)
     agents = ["tdd-guide", "code-reviewer"]
     if execution_profile == "web.browser":
-        agents.append("e2e-runner")
-    if task_requires_security_review(task_type, execution_profile):
-        agents.append("security-reviewer")
+        agents = _append_unique(agents, "e2e-runner")
+    if task_requires_security_review(task_type, execution_profile, normalized_risk_tags):
+        agents = _append_unique(agents, "security-reviewer")
+    if "browser" in normalized_risk_tags:
+        agents = _append_unique(agents, "e2e-runner")
+    if {"external-api", "streaming-media", "webrtc", "websocket"} & set(normalized_risk_tags):
+        agents = _append_unique(agents, "security-reviewer")
+    if {"realtime", "streaming-media"} & set(normalized_risk_tags):
+        agents = _append_unique(agents, "perf-optimizer")
+    if "data-migration" in normalized_risk_tags:
+        agents = _append_unique(agents, "architect")
     return agents
 
 
-def task_requires_security_review(task_type: str, execution_profile: str) -> bool:
+def task_requires_security_review(
+    task_type: str,
+    execution_profile: str,
+    risk_tags: list[str] | None = None,
+) -> bool:
+    normalize_risk_tags(risk_tags)
     tokens = set(task_type.split(","))
     return execution_profile == "backend.http" or bool(tokens & {"auth", "input", "api"})
 
@@ -2872,8 +3031,8 @@ def validate_task_contract(task_type: str, execution_profile: str) -> None:
         raise WorkflowError(
             "task_type is incompatible with execution_profile backend.cli. "
             f"backend.cli forbids task_type tokens: {', '.join(sorted(forbidden))}. "
-            "Use general / backend / cli / tooling / script / automation for CLI tasks, "
-            "or switch execution_profile to the matching profile "
+            "Use general / backend / cli / tooling / script / automation for CLI tasks. "
+            "For browser, HTTP, or job work, choose the matching execution_profile "
             "(web.browser / backend.http / backend.job). "
             "Hint: see `.theking/agents/planner.md` for the task_type × execution_profile matrix."
         )
@@ -2922,6 +3081,8 @@ def serialize_task_frontmatter(task_data: dict[str, Any]) -> str:
         f"requires_security_review: {'true' if bool(task_data['requires_security_review']) else 'false'}",
         "required_agents:",
         *[f"  - {stringify(agent)}" for agent in task_data["required_agents"]],
+        "risk_tags:",
+        *[f"  - {risk_tag}" for risk_tag in normalize_risk_tags(task_data.get("risk_tags"))],
         "depends_on:",
         *[f"  - {stringify(dep)}" for dep in task_data["depends_on"]],
         f"current_review_round: {int(task_data['current_review_round'])}",

@@ -185,8 +185,8 @@ def test_full_flow_rejects_sparse_spec_via_cli(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "Test Plan" in result.stderr
     assert ">= 5" in result.stderr
-    # Error message must point at the lightweight escape hatch.
-    assert "lightweight" in result.stderr
+    assert "Add more Test Plan items" in result.stderr
+    assert "flow by setting" not in result.stderr
 
 
 def test_missing_flow_field_defaults_to_full_and_rejects_sparse_spec(tmp_path: Path) -> None:
@@ -256,6 +256,7 @@ def test_lightweight_one_below_floor_fails(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert ">= 3" in result.stderr
+    assert "flow by setting" not in result.stderr
 
 
 def test_task_md_template_documents_flow_field(tmp_path: Path) -> None:

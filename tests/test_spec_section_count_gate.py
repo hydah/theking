@@ -11,8 +11,8 @@ spec.md must carry at least a minimum number of items under 'Test Plan' and
 - Comment-only content still counts as 0.
 - Nested bullets under a top-level bullet count as 1 top-level item.
 
-The error message must name the deficient section and both remediation paths
-(switch to lightweight flow, or add more items).
+The error message must name the deficient section and instruct authors to add
+the required content instead of hinting at a lower flow.
 """
 
 from __future__ import annotations
@@ -241,8 +241,8 @@ def test_full_flow_rejects_test_plan_below_threshold(tmp_path: Path) -> None:
     assert "Test Plan" in msg
     assert "5" in msg  # the threshold
     assert "2" in msg  # the observed count
-    # Both remediation paths must be named.
-    assert "lightweight" in msg.lower()
+    assert "Add more Test Plan items" in msg
+    assert "flow by setting" not in msg
 
 
 def test_full_flow_rejects_edge_cases_below_threshold(tmp_path: Path) -> None:

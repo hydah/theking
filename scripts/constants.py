@@ -50,6 +50,21 @@ ALLOWED_TASK_TYPE_TOKENS = {
     "automation",
     "job",
 }
+ALLOWED_RISK_TAGS: frozenset[str] = frozenset(
+    {
+        "auth",
+        "input",
+        "api",
+        "external-api",
+        "streaming-media",
+        "realtime",
+        "config",
+        "browser",
+        "data-migration",
+        "webrtc",
+        "websocket",
+    }
+)
 ALLOWED_EXECUTION_PROFILES = {
     "web.browser",
     "backend.http",

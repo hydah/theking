@@ -78,6 +78,8 @@ try:
         load_task_document,
         next_index,
         normalize_execution_profile,
+        normalize_risk_tags,
+        normalize_task_flow,
         normalize_sprint_name,
         normalize_task_type,
         normalize_title,
@@ -169,6 +171,8 @@ except ImportError:
         load_task_document,
         next_index,
         normalize_execution_profile,
+        normalize_risk_tags,
+        normalize_task_flow,
         normalize_sprint_name,
         normalize_task_type,
         normalize_title,
@@ -237,6 +241,21 @@ def _execution_profile_help() -> str:
     return (
         "Optional execution profile. If omitted, inferred from --task-type. "
         f"Allowed values: {profiles}."
+    )
+
+
+def _risk_tags_help() -> str:
+    return (
+        "Optional comma-separated risk tags for this task "
+        "(for example: external-api,browser,streaming-media)."
+    )
+
+
+def parse_risk_tags_argument(value: str | None) -> list[str]:
+    if value is None:
+        return []
+    return normalize_risk_tags(
+        [part.strip() for part in value.split(",") if part.strip()]
     )
 
 
@@ -320,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-profile",
         help=_execution_profile_help(),
     )
+    init_task.add_argument("--risk-tags", help=_risk_tags_help())
     init_task.set_defaults(handler=handle_init_task)
 
     check = add_command_parser(
@@ -377,6 +397,21 @@ def build_parser() -> argparse.ArgumentParser:
     advance_status.add_argument("--task-dir", required=True)
     advance_status.add_argument("--to-status", required=True)
     advance_status.set_defaults(handler=handle_advance_status)
+
+    retriage = add_command_parser(
+        subparsers,
+        "retriage",
+        help_text="Reset a planned-or-later task to draft with a recorded flow change.",
+        example=(
+            "workflowctl retriage --task-dir .theking/workflows/my-app/sprints/"
+            "sprint-001-foundation/tasks/TASK-001-demo --to-flow lightweight "
+            "--reason 'initial flow was too strict'"
+        ),
+    )
+    retriage.add_argument("--task-dir", required=True)
+    retriage.add_argument("--to-flow", required=True, choices=sorted({"full", "lightweight", "mechanical"}))
+    retriage.add_argument("--reason", required=True)
+    retriage.set_defaults(handler=handle_retriage)
 
     init_review_round = add_command_parser(
         subparsers,
@@ -806,6 +841,7 @@ def handle_init_task(args: argparse.Namespace) -> None:
     )
     validate_task_contract(task_type, execution_profile)
     verification_profile = infer_verification_profile(execution_profile)
+    risk_tags = parse_risk_tags_argument(args.risk_tags)
 
     sprints_dir = get_workflow_project_dir(project_dir, project_slug) / "sprints"
     ensure_local_path(sprints_dir, project_dir, "sprints")
@@ -830,8 +866,8 @@ def handle_init_task(args: argparse.Namespace) -> None:
     ensure_local_path(verification_dir, project_dir, "verification")
     verification_dir.mkdir(parents=True, exist_ok=True)
 
-    requires_security_review = task_requires_security_review(task_type, execution_profile)
-    required_agents = infer_required_agents(task_type, execution_profile)
+    requires_security_review = task_requires_security_review(task_type, execution_profile, risk_tags)
+    required_agents = infer_required_agents(task_type, execution_profile, risk_tags)
     review_mode = infer_default_review_mode(task_type, execution_profile)
 
     write_task_files(
@@ -843,6 +879,7 @@ def handle_init_task(args: argparse.Namespace) -> None:
         verification_profile=verification_profile,
         requires_security_review=requires_security_review,
         required_agents=required_agents,
+        risk_tags=risk_tags,
         depends_on=[],
         review_mode=review_mode,
     )
@@ -978,6 +1015,8 @@ def handle_advance_status(args: argparse.Namespace) -> None:
     sprint_md = task_paths.sprint_dir / "sprint.md"
     original_content = task_md.read_text(encoding="utf-8")
     original_sprint_content = sprint_md.read_text(encoding="utf-8")
+    ledger_file = task_paths.task_dir / "ledger.jsonl"
+    original_ledger_content = ledger_file.read_text(encoding="utf-8") if ledger_file.exists() else None
     task_data, body = load_task_document(task_md)
 
     requested_status = args.to_status.strip()
@@ -1024,25 +1063,98 @@ def handle_advance_status(args: argparse.Namespace) -> None:
 
     try:
         write_task_document(task_md, updated_task, body)
-        validate_task_dir(task_dir)
-        update_sprint_overview(sprint_md)
-    except Exception:
-        task_md.write_text(original_content, encoding="utf-8")
-        sprint_md.write_text(original_sprint_content, encoding="utf-8")
-        raise
-
-    # sprint-019 TASK-005: record transition in append-only ledger
-    with suppress(OSError):
         append_ledger_entry(
             task_paths.task_dir,
             {
                 "type": "transition",
                 "from_status": stringify(task_data["status"]),
                 "to_status": updated_task["status"],
+                "flow": normalize_task_flow(updated_task.get("flow")),
             },
         )
+        validate_task_dir(task_dir)
+        update_sprint_overview(sprint_md)
+    except Exception:
+        task_md.write_text(original_content, encoding="utf-8")
+        sprint_md.write_text(original_sprint_content, encoding="utf-8")
+        if original_ledger_content is None:
+            with suppress(OSError):
+                ledger_file.unlink()
+        else:
+            ledger_file.write_text(original_ledger_content, encoding="utf-8")
+        raise
 
     print(f"Updated {task_dir} -> {updated_task['status']}")
+
+
+def handle_retriage(args: argparse.Namespace) -> None:
+    input_task_dir = Path(args.task_dir).expanduser()
+    if input_task_dir.is_symlink():
+        raise WorkflowError(f"task_dir must not be a symlink: {input_task_dir}")
+    task_dir = input_task_dir.resolve()
+    task_paths = derive_task_paths(task_dir)
+    ensure_file(task_paths.task_md, "task.md")
+    ensure_file(task_paths.sprint_dir / "sprint.md", "sprint.md")
+
+    reason = stringify(args.reason)
+    if not reason:
+        raise WorkflowError("retriage reason must not be empty")
+
+    target_flow = normalize_task_flow(args.to_flow)
+    task_data, body = load_task_document(task_paths.task_md)
+    history = [stringify(status) for status in task_data["status_history"]]
+    if all(status == "draft" for status in history):
+        raise WorkflowError("retriage requires a task that has reached planned or later")
+    if int(task_data.get("current_review_round", 0)) > 0:
+        raise WorkflowError(
+            "retriage is only allowed before review rounds exist. Create a follow-up "
+            "task for post-review scope changes so existing review artifacts remain immutable."
+        )
+
+    from_flow = normalize_task_flow(task_data.get("flow"))
+    if target_flow == from_flow:
+        raise WorkflowError("retriage target flow must differ from the current flow")
+
+    updated_task = {
+        **task_data,
+        "status": "draft",
+        "status_history": ["draft"],
+        "flow": target_flow,
+        "current_review_round": 0,
+    }
+
+    original_task_content = task_paths.task_md.read_text(encoding="utf-8")
+    sprint_md = task_paths.sprint_dir / "sprint.md"
+    original_sprint_content = sprint_md.read_text(encoding="utf-8")
+    ledger_file = task_paths.task_dir / "ledger.jsonl"
+    original_ledger_content = ledger_file.read_text(encoding="utf-8") if ledger_file.exists() else None
+
+    try:
+        write_task_document(task_paths.task_md, updated_task, body)
+        append_ledger_entry(
+            task_paths.task_dir,
+            {
+                "type": "retriage",
+                "from_status": stringify(task_data["status"]),
+                "to_status": "draft",
+                "from_flow": from_flow,
+                "to_flow": target_flow,
+                "reason": reason,
+            },
+        )
+        validate_task_dir(task_dir)
+        update_sprint_overview(sprint_md)
+    except Exception:
+        task_paths.task_md.write_text(original_task_content, encoding="utf-8")
+        sprint_md.write_text(original_sprint_content, encoding="utf-8")
+        if original_ledger_content is None:
+            with suppress(OSError):
+                ledger_file.unlink()
+        else:
+            ledger_file.write_text(original_ledger_content, encoding="utf-8")
+        raise
+
+    print(f"Retriaged {task_dir} -> draft ({from_flow} -> {target_flow})")
 
 
 def handle_init_review_round(args: argparse.Namespace) -> None:
@@ -1208,12 +1320,13 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 if "review_mode" in entry
                 else infer_default_review_mode(task_type, execution_profile)
             )
+            risk_tags = normalize_risk_tags(entry.get("risk_tags", []))
+            verification_profile = infer_verification_profile(execution_profile)
+            requires_security_review = task_requires_security_review(task_type, execution_profile, risk_tags)
+            required_agents = infer_required_agents(task_type, execution_profile, risk_tags)
         except WorkflowError as error:
             plan_errors.append(f"[{slug}] {error}")
             continue
-        verification_profile = infer_verification_profile(execution_profile)
-        requires_security_review = task_requires_security_review(task_type, execution_profile)
-        required_agents = infer_required_agents(task_type, execution_profile)
         resolved_deps = parsed["deps_by_slug"][slug]
 
         prepared_entries.append(
@@ -1226,6 +1339,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 "verification_profile": verification_profile,
                 "requires_security_review": requires_security_review,
                 "required_agents": required_agents,
+                "risk_tags": risk_tags,
                 "depends_on": resolved_deps,
                 "spec_hints": entry.get("_spec_hints", {}),
                 "review_mode": review_mode,
@@ -1267,6 +1381,7 @@ def handle_init_sprint_plan(args: argparse.Namespace) -> None:
                 verification_profile=entry["verification_profile"],
                 requires_security_review=entry["requires_security_review"],
                 required_agents=entry["required_agents"],
+                                risk_tags=entry["risk_tags"],
                 depends_on=entry["depends_on"],
                 spec_hints=entry.get("spec_hints") or None,
                 bundle=bundle_map.get(entry["_slug"]) if bundle_map else None,

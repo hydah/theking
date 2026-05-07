@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -176,6 +177,59 @@ def test_new_task_rejects_production_in_head_commit(tmp_path: Path) -> None:
     _git(["commit", "--quiet", "-m", "sneaky impl"], tmp_path)
 
     with pytest.raises(WorkflowError, match=r"(?is)(production|recent commit|HEAD)"):
+        validate_red_transition_diff(paths, tmp_path, task_is_new=True, skeleton=False)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not in PATH")
+def test_new_task_ignores_head_commit_that_predates_planned_transition(tmp_path: Path) -> None:
+    """A previous task's latest HEAD production commit must not block a new
+    task's red transition when the planned ledger recorded the same HEAD."""
+    _init_repo(tmp_path)
+    _stage(tmp_path, "scripts/previous_task.py", "def done(): return 1\n")
+    _git(["commit", "--quiet", "-m", "previous task"], tmp_path)
+    head = _git(["rev-parse", "HEAD"], tmp_path).stdout.strip()
+    paths = _mk_task_paths(tmp_path)
+    (paths.task_dir / "ledger.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "transition",
+                "from_status": "draft",
+                "to_status": "planned",
+                "flow": "full",
+                "git_head": head,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    validate_red_transition_diff(paths, tmp_path, task_is_new=True, skeleton=False)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not in PATH")
+def test_new_task_rejects_head_commit_after_planned_transition(tmp_path: Path) -> None:
+    """If HEAD advances after the planned baseline and contains production
+    code, the anti-stash guard must still reject the red transition."""
+    _init_repo(tmp_path)
+    paths = _mk_task_paths(tmp_path)
+    planned_head = _git(["rev-parse", "HEAD"], tmp_path).stdout.strip()
+    (paths.task_dir / "ledger.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "transition",
+                "from_status": "draft",
+                "to_status": "planned",
+                "flow": "full",
+                "git_head": planned_head,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _stage(tmp_path, "scripts/secret_impl.py", "def impl(): return 42\n")
+    _git(["commit", "--quiet", "-m", "post-planned impl"], tmp_path)
+
+    with pytest.raises(WorkflowError, match=r"(?is)(production|HEAD)"):
         validate_red_transition_diff(paths, tmp_path, task_is_new=True, skeleton=False)
 
 
